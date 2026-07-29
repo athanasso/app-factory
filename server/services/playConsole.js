@@ -70,6 +70,18 @@ export async function fetchPlayStoreTitle(packageName) {
   return null;
 }
 
+async function commitEdit(publisher, packageName, editId) {
+  try {
+    return await publisher.edits.commit({ packageName, editId });
+  } catch (err) {
+    if (err.message && err.message.includes('changesNotSentForReview')) {
+      console.log(`[Play API Mutation] Note: Setting changesNotSentForReview=true for ${packageName}...`);
+      return await publisher.edits.commit({ packageName, editId, changesNotSentForReview: true });
+    }
+    throw err;
+  }
+}
+
 // Live API Store Mutation: Sync AI generated listings directly to Google Play Console
 export async function syncStoreListingsViaAPI(packageName, appId) {
   const publisher = getPublisher();
@@ -94,18 +106,27 @@ export async function syncStoreListingsViaAPI(packageName, appId) {
           try {
             const data = JSON.parse(fs.readFileSync(listingPath, 'utf8'));
             if (data.title && data.shortDescription && data.fullDescription) {
-              await publisher.edits.listings.update({
-                packageName,
-                editId,
-                language: locale,
-                requestBody: {
-                  title: data.title.slice(0, 30),
-                  shortDescription: data.shortDescription.slice(0, 80),
-                  fullDescription: data.fullDescription.slice(0, 4000),
+              const PLAY_LOCALE_MAP = { 'ar-SA': 'ar', 'ar-AE': 'ar', 'he-IL': 'iw-IL', 'id-ID': 'id' };
+              const playLanguage = PLAY_LOCALE_MAP[locale] || locale;
+              const requestBody = {
+                title: data.title.slice(0, 30),
+                shortDescription: data.shortDescription.slice(0, 80),
+                fullDescription: data.fullDescription.slice(0, 4000),
+              };
+              try {
+                await publisher.edits.listings.update({ packageName, editId, language: playLanguage, requestBody });
+                committedLocales.push(playLanguage);
+                console.log(`[Play API Mutation] Staged listing update for locale: ${playLanguage}`);
+              } catch (locErr) {
+                if (locErr.message && locErr.message.includes('not currently supported') && playLanguage.includes('-')) {
+                  const baseLang = playLanguage.split('-')[0];
+                  await publisher.edits.listings.update({ packageName, editId, language: baseLang, requestBody });
+                  committedLocales.push(baseLang);
+                  console.log(`[Play API Mutation] Staged listing update for locale (fallback base code): ${baseLang}`);
+                } else {
+                  throw locErr;
                 }
-              });
-              committedLocales.push(locale);
-              console.log(`[Play API Mutation] Staged listing update for locale: ${locale}`);
+              }
             }
           } catch (locErr) {
             console.warn(`[Play API Mutation] Failed staging locale ${locale}:`, locErr.message);
@@ -115,7 +136,7 @@ export async function syncStoreListingsViaAPI(packageName, appId) {
     }
 
     // Commit the edit transaction so it logs directly into Play Console Activity Log
-    await publisher.edits.commit({ packageName, editId });
+    await commitEdit(publisher, packageName, editId);
     console.log(`[Play API Mutation] ✔️ Successfully committed edit session to Google Play servers!`);
 
     return {
@@ -163,7 +184,7 @@ export async function promoteReleaseTrackViaAPI(packageName, toTrack = 'producti
       // If alpha is empty, push default release state
     }
 
-    await publisher.edits.commit({ packageName, editId });
+    await commitEdit(publisher, packageName, editId);
     console.log(`[Play API Mutation] ✔️ Track promotion committed successfully!`);
     return { success: true, editId, track: toTrack };
   } catch (err) {
@@ -213,7 +234,7 @@ export async function uploadBundleViaAPI(packageName, aabFilePath, track = 'inte
     });
 
     // 4. Commit the edit transaction
-    await publisher.edits.commit({ packageName, editId });
+    await commitEdit(publisher, packageName, editId);
     console.log(`[Play API Mutation] ✔ Committed release track '${track}' with versionCode ${versionCode} to Google Play Console!`);
 
     return { success: true, editId, versionCode, track, summary: `✔ Live API v3: Physical AAB uploaded & staged to Play track '${track}' (vCode ${versionCode})` };

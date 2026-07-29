@@ -47,12 +47,23 @@ const getPlayCredentials = () => {
 export const preparePlayConsoleUpload = async (app) => {
   console.log(`[Submission Engine] Connecting to Google Play Developer API v3 for: ${app.name}`);
   
+  // Execute Live API Store Mutation via Google Play Developer API v3 to guarantee latest copy renders on Play Console
+  const apiMutationRes = await syncStoreListingsViaAPI(app.packageName, app.id);
+  const mutationStatus = apiMutationRes.success 
+    ? (apiMutationRes.committedLocales && apiMutationRes.committedLocales.length > 0
+        ? `✔ Live API v3 Committed (${apiMutationRes.committedLocales.length} Locales Synced to Google Play Console)`
+        : `⚠️ Play API v3 Connected (0 locales sent - generate translations first!)`)
+    : `⚠️ Play API Mutation Error: ${apiMutationRes.error || 'Failed to stage edits'}`;
+
   const existingFilePath = path.join(getSubmissionDir(app.id), 'play_console_upload.json');
   if (fs.existsSync(existingFilePath)) {
     try {
       const existingData = JSON.parse(fs.readFileSync(existingFilePath, 'utf8'));
-      console.log(`[Submission Engine] ✔ Found existing Play Console upload record for ${app.name} -> Retaining from initial submission (Skipping duplicate AAB upload)`);
-      existingData.summary = `✔ AAB & store copy verified active on Play Console (Retained from initial submission)`;
+      console.log(`[Submission Engine] ✔ Found existing Play Console upload record for ${app.name} -> Store copy synced; retaining existing AAB binary upload`);
+      existingData.apiMutationResult = apiMutationRes;
+      existingData.timestamp = new Date().toISOString();
+      existingData.summary = `${mutationStatus} · AAB active on Play Console`;
+      fs.writeFileSync(existingFilePath, JSON.stringify(existingData, null, 2));
       return existingData;
     } catch (e) {}
   }
@@ -65,14 +76,6 @@ export const preparePlayConsoleUpload = async (app) => {
     sizeMb: '36.8 MB',
     summary: 'Pre-verified production build bundle'
   };
-
-  // Execute Live API Store Mutation via Google Play Developer API v3
-  const apiMutationRes = await syncStoreListingsViaAPI(app.packageName, app.id);
-  const mutationStatus = apiMutationRes.success 
-    ? (apiMutationRes.committedLocales && apiMutationRes.committedLocales.length > 0
-        ? `✔ Live API v3 Committed (${apiMutationRes.committedLocales.length} Locales Synced to Google Play Console)`
-        : `⚠️ Play API v3 Connected (0 locales sent - generate translations first!)`)
-    : `⚠️ Play API Mutation Error: ${apiMutationRes.error || 'Failed to stage edits'}`;
 
   // Determine release track based on whether app is real / published
   const track = (app.isReal && app.status === 'Published') ? 'production' : 'internal';
