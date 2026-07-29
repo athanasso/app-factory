@@ -73,7 +73,7 @@ Translate and transcreate the following Google Play Store listing text from Engl
 Do not do a robotic literal translation; adapt idioms, maintain ASO impact, keep all formatting bullets and emojis intact!
 
 English Input:
-- Title (max 30 chars in target lang if possible): "${enListing.title}"
+- Title: "${enListing.title}" (Must strictly maintain Play Store ASO keyword optimization structure in ${locale.name}, maximizing search visibility, and MUST remain strictly under Google Play's 30-character limit!)
 - Short Description (max 80 chars!): "${enListing.shortDescription}"
 - Full Description:
 """

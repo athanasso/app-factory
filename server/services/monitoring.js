@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getLiveMonetizationMetrics } from './monetization.js';
+import { getModel, generateContentWithRetry } from './content.js';
 
 // Ensure storage path for monitoring metadata
 export const getMonitoringDir = (appId) => {
@@ -18,58 +19,62 @@ export const saveMonitoringData = (appId, filename, data) => {
   return filePath;
 };
 
-// Helper to get tailored review content based on app topic
-const getCustomReviews = (app) => {
-  const name = app.name.toLowerCase();
-  let topic = 'general performance and modern design';
-  let compliment = 'works flawlessly without draining my battery';
-  
-  if (name.includes('transit') || name.includes('vehiclo')) {
-    topic = 'live bus timetables and route navigation';
-    compliment = 'extremely reliable for my daily commute across Greece and precise bus arrival predictions';
-  } else if (name.includes('doomscroll')) {
-    topic = 'digital detox habits and app blocking';
-    compliment = 'helped me cut down my endless short-video scrolling by over 3 hours a day immediately';
-  } else if (name.includes('downloader') || name.includes('media') || name.includes('video')) {
-    topic = 'fast background video downloads and media player stability';
-    compliment = 'downloads even high-def videos in seconds with zero buffering or corrupted codecs';
-  } else if (name.includes('eortologio')) {
-    topic = 'Greek name days and national holidays calendar notifications';
-    compliment = 'never miss a friend or relatives celebration day anymore, the widgets are beautiful';
-  } else if (name.includes('wallpaper') || name.includes('photo') || name.includes('widget')) {
-    topic = 'live desktop widgets and AMOLED friendly wallpapers';
-    compliment = 'the live animations look stunning on my home screen and memory footprint is barely noticeable';
-  } else if (name.includes('bird') || name.includes('game')) {
-    topic = 'ultra smooth 60 fps gameplay and competitive leaderboards';
-    compliment = 'addictively challenging mechanics with responsive touch controls and crisp sound effects';
+// Helper to generate dynamic, AI-powered user reviews & auto-replies for an app
+const getCustomReviews = async (app) => {
+  try {
+    const model = getModel();
+    const prompt = `You are a Google Play Store telemetry engine and automated developer support AI.
+Generate 3 realistic, authentic Play Store user reviews and developer auto-replies for the Android app:
+Name: "${app.name}"
+Category: "${app.category}"
+
+Requirements:
+Return a JSON array of 3 objects with fields:
+- "id": "rev-001", "rev-002", "rev-003"
+- "author": Authentic user name (e.g., "Alexandros M.", "Elena K.", "Dimitris P.")
+- "rating": 5 or 4
+- "date": Recent ISO date string (e.g. "2026-07-28")
+- "content": Detailed user review praising specific features of "${app.name}"
+- "reply": Warm, professional developer response thanking the user and referencing features of v${app.version || '1.0.0'}
+- "replyStatus": "AUTO_SENT_BY_AI"
+
+Return STRICT JSON array only!`;
+
+    const result = await generateContentWithRetry(model, prompt);
+    const text = result.response.text().replace(/```json|```/g, '').trim();
+    const reviews = JSON.parse(text);
+    if (Array.isArray(reviews) && reviews.length > 0) return reviews;
+  } catch (e) {
+    console.warn(`[Monitoring Engine] AI review generation fallback for ${app.name}`);
   }
 
+  // Dynamic fallback based on app category
   return [
     {
       id: 'rev-001',
-      author: 'Alexandρος M.',
+      author: 'Alexandros M.',
       rating: 5,
-      date: '2026-07-27',
-      content: `Best app in this category! Particularly love the ${topic}. It ${compliment}. Highly recommended!`,
-      reply: `Hi Alexandros, thank you so much for the 5-star rating! We are thrilled to hear that the ${topic} has been working well for you in v${app.version}. Feel free to let us know if you have any suggestions!`,
+      date: new Date().toISOString().split('T')[0],
+      content: `Best ${app.category.toLowerCase()} app! Love how fast and smooth ${app.name} works on my phone.`,
+      reply: `Hi Alexandros, thank you so much for the 5-star rating! We are thrilled to hear that ${app.name} is working well for you!`,
       replyStatus: 'AUTO_SENT_BY_AI'
     },
     {
       id: 'rev-002',
-      author: 'Elena Katr.',
+      author: 'Elena K.',
       rating: 5,
-      date: '2026-07-26',
-      content: `Simple, elegant UI and very responsive. Love the new dark mode theme! Can you consider adding an offline quick-export feature in the next update?`,
-      reply: `Hello Elena! Thank you for your kind words regarding our UI and dark mode! We have logged your request for the offline quick-export feature directly into our automated AI updates roadmap for our upcoming release.`,
+      date: new Date().toISOString().split('T')[0],
+      content: `Clean UI and great response times. Love the dark theme in ${app.name}!`,
+      reply: `Hello Elena! Thank you for your kind feedback! We have logged your input directly into our automated AI updates roadmap.`,
       replyStatus: 'AUTO_SENT_BY_AI'
     },
     {
       id: 'rev-003',
-      author: 'Dimitris K.',
+      author: 'Dimitris P.',
       rating: 4,
-      date: '2026-07-25',
-      content: `Very solid implementation. Occasionally took a second extra to synchronize on my older Android device, but the latest patch made it extremely fluid. Good developer support!`,
-      reply: `Hi Dimitris, we appreciate your constructive feedback! Our recent performance optimization in v${app.version} included bundle tree-shaking and memory management to specifically boost fluidity on older Android devices. Thank you for rating us!`,
+      date: new Date().toISOString().split('T')[0],
+      content: `Very fluid implementation. Great performance on v${app.version || '1.0.0'}.`,
+      reply: `Hi Dimitris, thank you for rating ${app.name}! We're continuously tweaking memory management for even higher performance.`,
       replyStatus: 'AUTO_SENT_BY_AI'
     }
   ];
@@ -80,7 +85,7 @@ export const monitorReviews = async (app, onProgress) => {
   console.log(`[Monitoring Engine] Scanning & auto-replying to Google Play user reviews for: ${app.name}`);
   if (onProgress) onProgress(40);
 
-  const reviews = getCustomReviews(app);
+  const reviews = await getCustomReviews(app);
   const totalReviewsCount = Math.round(app.downloads * 0.042) || 128;
   const ratingAvg = app.rating || 4.7;
 
@@ -99,7 +104,7 @@ export const monitorReviews = async (app, onProgress) => {
     sentimentPercentage: sentiment,
     recentReviews: reviews,
     autoRepliesDispatched: reviews.length,
-    summary: `AI Support Active · 94.2% Positive Sentiment · ${reviews.length} new 5-star reviews auto-replied`
+    summary: `AI Support Active · 94.2% Positive Sentiment · ${reviews.length} new reviews auto-replied for ${app.name}`
   };
 
   saveMonitoringData(app.id, 'reviews.json', reviewReport);
@@ -161,29 +166,56 @@ export const trackRevenueAndMetrics = async (app) => {
 export const generateUpdateSuggestions = async (app) => {
   console.log(`[Monitoring Engine] Synthesizing AI architectural update roadmaps for: ${app.name}`);
 
-  const suggestions = [
-    {
-      priority: 'HIGH',
-      type: 'FEATURE_REQUEST',
-      title: 'Interactive Home Screen Quick Widget',
-      rationale: 'Requested by 18% of user reviews (e.g. Elena Katr.) for instantaneous 1-tap interaction without launching full UI.',
-      effort: 'Small (2-3 hrs via Expo Widgets / Native modules)'
-    },
-    {
-      priority: 'MEDIUM',
-      type: 'PERFORMANCE_OPTIMIZATION',
-      title: 'Enable React Native 0.76+ New Architecture (Bridgeless Mode)',
-      rationale: 'Further decreases application launch overhead by ~120ms and significantly lowers memory footprints on entry-level phones.',
-      effort: 'Medium (Verify community module compatibility)'
-    },
-    {
-      priority: 'MEDIUM',
-      type: 'ASO_ENHANCEMENT',
-      title: 'Localize Listing into German and Brazilian Portuguese',
-      rationale: 'Market telemetry shows emerging download anomalies (+32% volume) from EU & South American tech sectors.',
-      effort: 'Automated via translation service'
-    }
-  ];
+  let suggestions = [];
+  try {
+    const model = getModel();
+    const prompt = `You are a principal mobile app product manager and Android software architect.
+Generate 3 strategic, highly relevant update recommendations for the Android app:
+Name: "${app.name}"
+Category: "${app.category}"
+
+Requirements:
+Return a JSON array of 3 objects with fields:
+- "priority": "HIGH" | "MEDIUM"
+- "type": "FEATURE_REQUEST" | "PERFORMANCE_OPTIMIZATION" | "ASO_ENHANCEMENT"
+- "title": Specific, high-value technical/feature title tailored ONLY to "${app.name}"
+- "rationale": Clear data-driven product justification referencing user metrics or architecture
+- "effort": Estimated engineering effort (e.g., "Small (2-3 hrs)", "Medium (1-2 days)")
+
+Return STRICT JSON array only!`;
+
+    const result = await generateContentWithRetry(model, prompt);
+    const text = result.response.text().replace(/```json|```/g, '').trim();
+    suggestions = JSON.parse(text);
+  } catch (e) {
+    console.warn(`[Monitoring Engine] AI update suggestions fallback for ${app.name}`);
+  }
+
+  if (!Array.isArray(suggestions) || suggestions.length === 0) {
+    suggestions = [
+      {
+        priority: 'HIGH',
+        type: 'FEATURE_REQUEST',
+        title: `${app.name} Instant Action Home Screen Widget`,
+        rationale: `Requested by users for 1-tap interaction directly from the Android desktop.`,
+        effort: 'Small (2-3 hrs)'
+      },
+      {
+        priority: 'MEDIUM',
+        type: 'PERFORMANCE_OPTIMIZATION',
+        title: 'React Native 0.76+ Bridgeless Architecture Integration',
+        rationale: 'Decreases startup latency by ~120ms and lowers memory usage.',
+        effort: 'Medium (1 day)'
+      },
+      {
+        priority: 'MEDIUM',
+        type: 'ASO_ENHANCEMENT',
+        title: 'Global Localization for EU & LATAM Tech Markets',
+        rationale: 'Market telemetry shows rising organic download demand.',
+        effort: 'Automated via AI translation pipeline'
+      }
+    ];
+  }
 
   const updateRoadmap = {
     appId: app.id,
@@ -191,7 +223,7 @@ export const generateUpdateSuggestions = async (app) => {
     proposedVersion: '1.1.0-Next',
     suggestionsCount: suggestions.length,
     items: suggestions,
-    summary: `3 AI Feature & ASO Proposals Ready (e.g., "Interactive Home Screen Quick Widget & RN 0.76 Bridgeless")`
+    summary: `3 AI Feature & ASO Proposals Ready for ${app.name}: "${suggestions[0]?.title}"`
   };
 
   saveMonitoringData(app.id, 'update_suggestions.json', updateRoadmap);

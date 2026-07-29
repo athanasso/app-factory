@@ -11,7 +11,7 @@ const getGenAI = () => {
   return new GoogleGenerativeAI(apiKey);
 };
 
-const getModel = () => {
+export const getModel = () => {
   const genAI = getGenAI();
   // Using gemini-flash-latest which is verified operational for this API key
   return genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
@@ -174,6 +174,32 @@ Respond in strict JSON format:
   }
 };
 
+// Craft ASO-optimized Play Store title by appending top category search keywords within the 30-character limit
+export function craftAsoTitle(brandName, category = 'Tools') {
+  const cleanBrand = brandName.trim();
+  if (cleanBrand.length > 26 && cleanBrand.length <= 30) return cleanBrand.slice(0, 30);
+  if (cleanBrand.includes(':') && cleanBrand.length <= 30) return cleanBrand;
+
+  let name = cleanBrand.split(':')[0].split(' - ')[0].trim();
+  const asoSuffixes = {
+    'Games': ['Fun Arcade Game', 'Tap Flying Game', 'Arcade Game', 'Fun Game', 'Arcade'],
+    'Travel & Local': ['Live Transit & Map', 'Transit & Map', 'Live Tracker', 'Map', 'Transit'],
+    'Books & Reference': ['Calendar & Dates', 'Reference & Book', 'Quick Guide', 'Guide'],
+    'Media & Video': ['HD Player & Track', 'HD Media Player', 'Video Player', 'Player'],
+    'Tools': ['Fast & Handy Tool', 'Utility & Tools', 'Smart Tool', 'Utility', 'Tool'],
+    'Social': ['Followers & Chat', 'Social Analytics', 'Chat & Share', 'Social'],
+    'News & Magazines': ['Daily RSS News', 'News Reader', 'Daily Feed', 'News'],
+    'Productivity': ['Smart Daily Tool', 'Quick Productivity', 'Task Organizer', 'Tasks']
+  };
+
+  const suffixes = asoSuffixes[category] || ['Smart Pocket Tool', 'Mobile Utility', 'Fast App'];
+  for (const s of suffixes) {
+    const candidate = `${name}: ${s}`;
+    if (candidate.length <= 30) return candidate;
+  }
+  return cleanBrand.slice(0, 30);
+}
+
 // 3. Generate Play Store Listing Description
 export const generateDescription = async (app) => {
   const listing = getListing(app.id) || {};
@@ -192,7 +218,7 @@ Category: "${app.category}"
 Target ASO Keywords: ${keywords}
 
 Requirements according to Google Play guidelines:
-1. "title": Brand name or Name + keywords (max 30 characters!)
+1. "title": MUST follow Play Store ASO Best Practices by combining the brand name with high-volume search keywords from the app's niche/category (e.g., "Floppy Flyer: Fun Arcade Game", "Vehiclo: Live Transit & Map", or "Eortologio: Calendar & Dates"). NEVER return just a bare brand name alone! Must strictly stay within Google Play's 30-character hard limit!
 2. "shortDescription": Punchy marketing hook focused on user benefits (max 80 characters!)
 3. "fullDescription": Comprehensive, highly engaging description (about 1200-2500 characters). Use eye-catching Unicode emojis (🚀, ✨, 🔥, etc.), distinct bullet point formatting for core features, and weave in the ASO keywords naturally to maximize search rankings.
 4. "releaseNotes": Short initial release notes (max 400 characters).
@@ -211,7 +237,7 @@ Return STRICT JSON only:
     const parsed = JSON.parse(text);
     // Enforce character limits gracefully
     if (parsed.shortDescription?.length > 80) parsed.shortDescription = parsed.shortDescription.slice(0, 77) + '...';
-    if (parsed.title?.length > 30) parsed.title = parsed.title.slice(0, 30);
+    if (!parsed.title || parsed.title.length > 30) parsed.title = craftAsoTitle(parsed.title || app.name, app.category);
     
     const updatedListing = { ...listing, ...parsed, locale: 'en-US', updatedAt: new Date().toISOString() };
     saveListing(app.id, 'en-US', updatedListing);
@@ -219,7 +245,7 @@ Return STRICT JSON only:
     return parsed;
   } catch (e) {
     console.log(`[AI Hybrid Engine] Using instant store copywriting fallback profile for ${app.name}`);
-    const cleanTitle = (app.name.charAt(0).toUpperCase() + app.name.slice(1)).slice(0, 30);
+    const cleanTitle = craftAsoTitle(app.name, app.category);
     const fallback = {
       title: cleanTitle,
       shortDescription: `Experience the definitive ${app.category.toLowerCase()} tool engineered for speed & reliability!`.slice(0, 80),
