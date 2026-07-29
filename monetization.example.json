@@ -1,0 +1,12 @@
+{
+  "_comment": "Configuration for live monetization telemetry directly from Google AdMob and Google Play Console",
+  "adMob": {
+    "publisherId": "pub-XXXXXXXXXXXXXXXX",
+    "useServiceAccount": true,
+    "note": "Set your AdMob Publisher ID above. Authorize your service-account.json email in AdMob Settings -> Users & Permissions to enable direct network ad reports."
+  },
+  "googlePlay": {
+    "reportBucket": "gs://pubsite_prod_00000000000/earnings/",
+    "note": "Paste your Cloud Storage URI from Play Console -> Download Reports -> Financial Reports. Grant your Service Account the Storage Object Viewer role in GCP IAM."
+  }
+}

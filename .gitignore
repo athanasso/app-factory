@@ -1,0 +1,45 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Node modules & build artifacts
+node_modules/
+dist/
+dist-ssr/
+build/
+*.local
+
+# Sensitive API credentials and Google Cloud OAuth Keys
+.env
+.env.*
+!.env.example
+service-account.json
+!service-account.example.json
+*.json.key
+*-credentials.json
+
+# Local runtime DB and AI generated content / testing telemetry
+data/
+
+# Android & native release binaries
+*.apk
+*.aab
+*.keystore
+*.jks
+*.p12
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
