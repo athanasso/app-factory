@@ -38,7 +38,7 @@ export const translateStoreListing = async (appId, onProgress) => {
   const existingLocales = [];
   for (const loc of TARGET_LOCALES) {
     const existing = getListing(appId, loc.code);
-    if (existing && existing.fullDescription) {
+    if (existing && existing.fullDescription && !existing.title?.toLowerCase().includes('flappy') && !existing.fullDescription?.toLowerCase().includes('flappy')) {
       existingLocales.push(loc.code);
     } else {
       allExisting = false;

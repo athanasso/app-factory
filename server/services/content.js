@@ -177,7 +177,7 @@ Respond in strict JSON format:
 // 3. Generate Play Store Listing Description
 export const generateDescription = async (app) => {
   const listing = getListing(app.id) || {};
-  if (listing && listing.fullDescription && listing.title) {
+  if (listing && listing.fullDescription && listing.title && !listing.title.toLowerCase().includes('flappy') && !listing.fullDescription.toLowerCase().includes('flappy')) {
     console.log(`[AI Content] ✔ Found existing store listing copy for ${app.name} ("${listing.title}") -> Retaining from initial copywriting`);
     return listing;
   }

@@ -103,32 +103,117 @@ const allCompleted = (pipeline) =>
     steps: section.steps.map((step) => ({ ...step, status: StepStatus.COMPLETED, progress: 100 })),
   }));
 
-const getAppIcon = (name) => {
-  const map = {
-    'Vehiclo': '🚗',
-    'GreeceTransit': '🚌',
-    'Eortologio': '📅',
-    'doomscroll': '📱',
-    'downloader': '⬇️',
-    'flappy-bird-2': '🐦',
-    'galazio': '🌊',
-    'instunfollowers': '👥',
-    'media-tracker': '🎬',
-    'media-tracker-auth': '🔐',
-    'photos-widget': '🖼️',
-    'photos-widget-auth': '📸',
-    'video-wallpaper': '🎥',
-  };
-  return map[name] || '🚀';
+// Dynamically extract Play Store category from configs or derive via semantic keyword matching
+const getCategory = (appPath, appName, displayName, packageName) => {
+  if (appPath) {
+    try {
+      const appJsonPath = path.join(appPath, 'app.json');
+      if (fs.existsSync(appJsonPath)) {
+        const data = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'));
+        const cat = data?.expo?.android?.playStoreCategory || data?.expo?.category || data?.expo?.extra?.category || data?.expo?.extra?.playStoreCategory || data?.category;
+        if (cat && typeof cat === 'string') return cat;
+      }
+    } catch (e) {}
+
+    try {
+      const pkgPath = path.join(appPath, 'package.json');
+      if (fs.existsSync(pkgPath)) {
+        const data = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+        const cat = data?.playStoreCategory || data?.category;
+        if (cat && typeof cat === 'string') return cat;
+      }
+    } catch (e) {}
+  }
+
+  try {
+    const listingPath = path.join(process.cwd(), 'data', 'apps_content', `real-${appName.toLowerCase()}`, 'locales', 'en-US', 'listing.json');
+    if (fs.existsSync(listingPath)) {
+      const listing = JSON.parse(fs.readFileSync(listingPath, 'utf8'));
+      if (listing?.category) return listing.category;
+      if (listing?.seoMetadata?.category) return listing.seoMetadata.category;
+      if (listing?.seoMetadata?.nicheSummary) {
+        const match = listing.seoMetadata.nicheSummary.match(/\(([A-Z][a-z0-9\s&]+)\)/);
+        if (match && match[1]) return match[1];
+      }
+    }
+  } catch (e) {}
+
+  // Semantic topic clustering fallback based on available app metadata
+  const text = `${appName} ${displayName || ''} ${packageName || ''}`.toLowerCase();
+  if (/game|play|flappy|floppy|derpy|fly|arcade|jump|puzzle|shooter|ball|level/.test(text)) return 'Games';
+  if (/transit|bus|metro|train|vehicle|vehiclo|car|auto|gps|map|travel|ride|navigation|flight/.test(text)) return 'Travel & Local';
+  if (/calendar|eortologio|date|nameday|holiday|book|dictionary|reference|bible|wiki|encyclopedia/.test(text)) return 'Books & Reference';
+  if (/media|video|movie|cinema|stream|player|tv|photo|gallery|camera|wallpaper|audio|music/.test(text)) return 'Media & Video';
+  if (/downloader|widget|tool|utility|cleaner|file|compress|calculator|qr|barcode|battery|settings/.test(text)) return 'Tools';
+  if (/social|chat|message|unfollow|follower|instunfollowers|tweet|community|share/.test(text)) return 'Social';
+  if (/news|scroll|doomscroll|reader|rss|feed|magazine|blog|daily/.test(text)) return 'News & Magazines';
+  if (/fitness|workout|health|run|gym|cal|steps/.test(text)) return 'Health & Fitness';
+  if (/finance|wallet|budget|money|bank|pay|crypto/.test(text)) return 'Finance';
+  return 'Productivity';
 };
 
-const getCategory = (name) => {
-  if (name.includes('Transit') || name.includes('Vehiclo')) return 'Travel & Local';
-  if (name.includes('Eortologio')) return 'Books & Reference';
-  if (name.includes('flappy')) return 'Games';
-  if (name.includes('media') || name.includes('video') || name.includes('photo')) return 'Media & Video';
-  if (name.includes('downloader') || name.includes('widget')) return 'Tools';
-  return 'Productivity';
+// Dynamically resolve app emoji icon from configs, keywords, or category fallbacks
+const getAppIcon = (appPath, appName, displayName, category) => {
+  if (appPath) {
+    try {
+      const appJsonPath = path.join(appPath, 'app.json');
+      if (fs.existsSync(appJsonPath)) {
+        const data = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'));
+        const emoji = data?.expo?.extra?.emoji || data?.expo?.extra?.iconEmoji || data?.expo?.iconEmoji || data?.emoji;
+        if (emoji && typeof emoji === 'string') return emoji;
+      }
+    } catch (e) {}
+
+    try {
+      const pkgPath = path.join(appPath, 'package.json');
+      if (fs.existsSync(pkgPath)) {
+        const data = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+        const emoji = data?.emoji || data?.iconEmoji;
+        if (emoji && typeof emoji === 'string') return emoji;
+      }
+    } catch (e) {}
+  }
+
+  // Semantic keyword mapping
+  const text = `${appName} ${displayName || ''}`.toLowerCase();
+  const keywordMap = [
+    { regex: /bird|fly|floppy|flappy|wing|feather|owl|eagle|derpy|disk/, emoji: '🐦' },
+    { regex: /car|vehicle|vehiclo|auto|drive|motor|traffic/, emoji: '🚗' },
+    { regex: /bus|transit|train|metro|coach|transport/, emoji: '🚌' },
+    { regex: /calendar|eortologio|date|event|schedule|planner|holiday/, emoji: '📅' },
+    { regex: /scroll|doomscroll|phone|mobile|addict/, emoji: '📱' },
+    { regex: /down|download|downloader|fetch|save|torrent|grabber/, emoji: '⬇️' },
+    { regex: /sea|ocean|water|galazio|blue|wave|beach|marine|summer/, emoji: '🌊' },
+    { regex: /unfollow|follower|social|user|friend|people|inst/, emoji: '👥' },
+    { regex: /movie|cinema|film|tracker|watchlist|actor|series|show/, emoji: '🎬' },
+    { regex: /auth|login|lock|password|security|crypto|key|protect/, emoji: '🔐' },
+    { regex: /photo|gallery|image|picture|widget|album/, emoji: '🖼️' },
+    { regex: /camera|shoot|snapshot|selfie|capture|lens/, emoji: '📸' },
+    { regex: /video|clip|wallpaper|live|streaming|record/, emoji: '🎥' },
+    { regex: /music|song|audio|sound|radio/, emoji: '🎵' },
+    { regex: /game|play|arcade|score|controller/, emoji: '🎮' },
+    { regex: /fitness|gym|workout|run/, emoji: '🏃' },
+    { regex: /money|finance|wallet|budget/, emoji: '💰' }
+  ];
+
+  for (const { regex, emoji } of keywordMap) {
+    if (regex.test(text)) return emoji;
+  }
+
+  // Category-based fallback
+  const categoryFallbacks = {
+    'Games': '🎮',
+    'Travel & Local': '🗺️',
+    'Books & Reference': '📚',
+    'Media & Video': '🎞️',
+    'Tools': '🛠️',
+    'Social': '💬',
+    'News & Magazines': '📰',
+    'Health & Fitness': '❤️',
+    'Finance': '💼'
+  };
+
+  return categoryFallbacks[category] || '🚀';
 };
 
 // Extract actual Android package name from project configs
@@ -265,12 +350,14 @@ const scanRealApps = () => {
         }
 
         const displayName = extractDisplayName(appPath, appName);
+        const category = getCategory(appPath, appName, displayName, packageName);
+        const icon = getAppIcon(appPath, appName, displayName, category);
 
         scannedApps.push({
           id: `real-${appName.toLowerCase()}`,
           name: displayName,
           packageName,
-          icon: getAppIcon(appName),
+          icon,
           iconUrl,
           status: AppStatus.PUBLISHED,
           version,
@@ -279,7 +366,7 @@ const scanRealApps = () => {
           rating: 0,
           pipeline: allCompleted(createPipelineTemplate()),
           lastUpdated: '2026-07-28',
-          category: getCategory(appName),
+          category,
           sourcePath: appPath,
           isReal: true,
         });
