@@ -71,6 +71,7 @@ export const translateStoreListing = async (appId, onProgress) => {
       const prompt = `You are a native expert software localization specialist and App Store marketer for ${locale.name} (${locale.code}).
 Translate and transcreate the following Google Play Store listing text from English into natural, high-converting ${locale.name}.
 Do not do a robotic literal translation; adapt idioms, maintain ASO impact, keep all formatting bullets and emojis intact!
+CRITICAL POLICY COMPLIANCE: If the English input contains a Google Play developer policy disclosure (such as an "ACCESSIBILITY SERVICE API DISCLOSURE", background location notice, or privacy assurance), you MUST accurately translate and prominently retain that full disclosure block in ${locale.name} to ensure store compliance and avoid review rejection!
 
 English Input:
 - Title: "${enListing.title}" (Must strictly maintain Play Store ASO keyword optimization structure in ${locale.name}, maximizing search visibility, and MUST remain strictly under Google Play's 30-character limit!)

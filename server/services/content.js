@@ -207,11 +207,11 @@ export const generateDescription = async (app) => {
     console.log(`[AI Content] ✔ Found existing store listing copy for ${app.name} ("${listing.title}") -> Retaining from initial copywriting`);
     return listing;
   }
-  console.log(`[AI Content] Running Gemini Store Listing Copywriter for ${app.name}...`);
+  console.log(`[AI Content] Running Gemini Store Listing Copywriter & Policy Compliance Audit for ${app.name}...`);
   const model = getModel();
   const keywords = listing.seoMetadata?.primaryKeywords?.join(', ') || app.category;
 
-  const prompt = `You are a master Google Play Store copywriter known for achieving top conversion rates and viral organic downloads.
+  const prompt = `You are a master Google Play Store copywriter and senior App Store compliance officer known for viral organic conversion rates and zero policy rejections.
 Write the official Google Play Store store listing text for the Android app:
 Name: "${app.name}"
 Category: "${app.category}"
@@ -221,6 +221,7 @@ Requirements according to Google Play guidelines:
 1. "title": MUST follow Play Store ASO Best Practices by combining the brand name with high-volume search keywords from the app's niche/category (e.g., "Floppy Flyer: Fun Arcade Game", "Vehiclo: Live Transit & Map", or "Eortologio: Calendar & Dates"). NEVER return just a bare brand name alone! Must strictly stay within Google Play's 30-character hard limit!
 2. "shortDescription": Punchy marketing hook focused on user benefits (max 80 characters!)
 3. "fullDescription": Comprehensive, highly engaging description (about 1200-2500 characters). Use eye-catching Unicode emojis (🚀, ✨, 🔥, etc.), distinct bullet point formatting for core features, and weave in the ASO keywords naturally to maximize search rankings.
+CRITICAL GOOGLE PLAY POLICY COMPLIANCE AUDIT: Automatically analyze the app's core feature set to determine if it utilizes any regulated or sensitive Android APIs/permissions (such as AccessibilityService API for screen addiction/app blocking, Background Location for live transit mapping, or System Alert Windows for floating overlays/widgets). If ANY sensitive service or permission is applicable, you MUST dynamically generate a dedicated, legally robust disclosure section inside fullDescription titled "🔒 [NAME OF SERVICE/PERMISSION] DISCLOSURE & PRIVACY POLICY". In this section, you must explicitly articulate (1) the technical reason WHY this application needs this API to operate its core features, and (2) provide an unconditional privacy assurance confirming zero collection, storage, or transmission of personal user data, passwords, keystrokes, or communications.
 4. "releaseNotes": Short initial release notes (max 400 characters).
 
 Return STRICT JSON only:
@@ -249,7 +250,7 @@ Return STRICT JSON only:
     const fallback = {
       title: cleanTitle,
       shortDescription: `Experience the definitive ${app.category.toLowerCase()} tool engineered for speed & reliability!`.slice(0, 80),
-      fullDescription: `Welcome to ${cleanTitle}! Built from the ground up for lightning-fast performance, zero lag, and ultra-smooth navigation on all Android devices.\n\n🔥 WHY CHOOSE ${cleanTitle.toUpperCase()}? 🔥\n• Modern, responsive UI designed for effortless daily usage\n• Supercharged resource optimization with minimal battery consumption\n• Regular maintenance updates and continuous stability enhancements\n\nDownload ${cleanTitle} today and upgrade your mobile experience! 🚀✨`,
+      fullDescription: `Welcome to ${cleanTitle}! Built from the ground up for lightning-fast performance, zero lag, and ultra-smooth navigation on all Android devices.\n\n🔥 WHY CHOOSE ${cleanTitle.toUpperCase()}? 🔥\n• Modern, responsive UI designed for effortless daily usage\n• Supercharged resource optimization with minimal battery consumption\n• Regular maintenance updates and continuous stability enhancements\n\n🔒 PRIVACY & COMPLIANCE ASSURANCE 🔒\nThis application strictly complies with all Google Play developer policies and privacy regulations. All sensitive Android device features or system permissions accessed by this application are used solely for localized core functionality on your device, with zero unauthorized collection, storage, or external sharing of sensitive personal user data or private communications.\n\nDownload ${cleanTitle} today and upgrade your mobile experience! 🚀✨`,
       releaseNotes: 'Worldwide high-speed Play Store release!',
     };
     saveListing(app.id, 'en-US', { ...listing, ...fallback, locale: 'en-US', updatedAt: new Date().toISOString() });
