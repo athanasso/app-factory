@@ -13,7 +13,7 @@ import {
   resolvePrivacyPolicyUrl,
 } from './publisherDefaults.js';
 import { seedTesterGroupsForFirstUpload } from './testerAutomation.js';
-import { generatePrivacyPolicy, vercelPrivacySlugForApp } from './privacyPolicy.js';
+import { generatePrivacyPolicy, privacySlugForApp } from './privacyPolicy.js';
 
 // Ensure storage path for submission metadata
 export const getSubmissionDir = (appId) => {
@@ -94,7 +94,7 @@ export const preparePlayConsoleUpload = async (
       console.warn(`[Submission Engine] Tester seed warning: ${err.message}`);
     }
 
-    let privacyUrl = resolvePrivacyPolicyUrl(vercelPrivacySlugForApp(app), defaults);
+    let privacyUrl = resolvePrivacyPolicyUrl(privacySlugForApp(app), defaults);
     try {
       const privacy = await generatePrivacyPolicy(app, { force: false });
       privacyUrl = privacy.url || privacyUrl;
@@ -116,7 +116,7 @@ export const preparePlayConsoleUpload = async (
       if (fs.existsSync(listingPath) && privacyUrl) {
         const listing = JSON.parse(fs.readFileSync(listingPath, 'utf8'));
         listing.privacyPolicyUrl = privacyUrl.includes('{slug}')
-          ? resolvePrivacyPolicyUrl(vercelPrivacySlugForApp(app), defaults)
+          ? resolvePrivacyPolicyUrl(privacySlugForApp(app), defaults)
           : privacyUrl;
         listing.contactEmail = defaults.contactEmail;
         listing.contactWebsite = defaults.contactWebsite;

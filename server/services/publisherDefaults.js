@@ -7,18 +7,20 @@ const DEFAULTS_PATH = path.resolve(process.cwd(), 'data', 'credentials', 'publis
 
 /**
  * Structural defaults only — contact/testers are harvested from live Play apps.
- * Privacy pages are separate Vercel deploys (manual upload), not the developer website.
- * Template: https://{slug}-privacy-policy.vercel.app/
+ * App privacy pages live on the portfolio: /privacy-policy/{slug}/
  */
 const STRUCTURAL_DEFAULTS = {
   defaultLanguage: 'en-US',
   contactWebsite: null,
   contactEmail: null,
   privacyPolicyUrl:
-    process.env.PRIVACY_POLICY_URL_TEMPLATE || 'https://{slug}-privacy-policy.vercel.app/',
+    process.env.PRIVACY_POLICY_URL_TEMPLATE ||
+    'https://athanasopoulos.is-a.dev/privacy-policy/{slug}/',
   privacyPoliciesRoot: process.env.PRIVACY_POLICIES_ROOT || 'D:/Projects/privacy-policies',
-  // Not used for path-style URLs; kept for settings/env override compatibility
-  privacyPoliciesBaseUrl: null,
+  privacyPoliciesPortfolioRoot:
+    process.env.PRIVACY_POLICIES_PORTFOLIO_ROOT ||
+    'D:/Projects/Next js/next-portfolio/public/privacy-policy',
+  privacyPoliciesBaseUrl: 'https://athanasopoulos.is-a.dev/privacy-policy',
   testerGoogleGroups: [],
   testerTracks: ['alpha', 'internal'],
   harvestedFrom: null,
@@ -61,13 +63,16 @@ function settingsOverrides() {
   }
 }
 
-/** Resolve Play privacy URL from template + slug (Vercel per-app deploys). */
+const PORTFOLIO_PRIVACY_TEMPLATE =
+  'https://athanasopoulos.is-a.dev/privacy-policy/{slug}/';
+
+/** Resolve Play privacy URL from portfolio template + slug. */
 export function resolvePrivacyPolicyUrl(slug, defaults = null) {
   const d = defaults || loadPublisherDefaults();
   const template =
     d.privacyPolicyUrl ||
     STRUCTURAL_DEFAULTS.privacyPolicyUrl ||
-    'https://{slug}-privacy-policy.vercel.app/';
+    PORTFOLIO_PRIVACY_TEMPLATE;
   if (!slug) return template;
   return String(template).replace(/\{slug\}/g, slug);
 }
@@ -76,12 +81,15 @@ function withDerivedFields(raw = {}) {
   const privacyPolicyUrl =
     raw.privacyPolicyUrl ||
     STRUCTURAL_DEFAULTS.privacyPolicyUrl ||
-    'https://{slug}-privacy-policy.vercel.app/';
+    PORTFOLIO_PRIVACY_TEMPLATE;
 
   return {
     ...STRUCTURAL_DEFAULTS,
     ...raw,
-    privacyPoliciesBaseUrl: raw.privacyPoliciesBaseUrl || null,
+    privacyPoliciesBaseUrl:
+      raw.privacyPoliciesBaseUrl || STRUCTURAL_DEFAULTS.privacyPoliciesBaseUrl,
+    privacyPoliciesPortfolioRoot:
+      raw.privacyPoliciesPortfolioRoot || STRUCTURAL_DEFAULTS.privacyPoliciesPortfolioRoot,
     privacyPolicyUrl,
     testerGoogleGroups: Array.isArray(raw.testerGoogleGroups) ? raw.testerGoogleGroups : [],
     testerTracks:
@@ -231,11 +239,15 @@ export async function harvestPublisherDefaultsFromExistingApps({ force = false }
     defaultLanguage: best.defaultLanguage || 'en-US',
     contactWebsite: best.contactWebsite,
     contactEmail: best.contactEmail,
-    // Keep Vercel privacy template — do NOT derive from contactWebsite (is-a.dev)
+    // Portfolio path — never derive from contactWebsite alone without /privacy-policy
     privacyPolicyUrl:
-      existing.privacyPolicyUrl ||
-      STRUCTURAL_DEFAULTS.privacyPolicyUrl ||
-      'https://{slug}-privacy-policy.vercel.app/',
+      existing.privacyPolicyUrl?.includes('privacy-policy/{slug}')
+        ? existing.privacyPolicyUrl
+        : PORTFOLIO_PRIVACY_TEMPLATE,
+    privacyPoliciesPortfolioRoot:
+      existing.privacyPoliciesPortfolioRoot ||
+      STRUCTURAL_DEFAULTS.privacyPoliciesPortfolioRoot,
+    privacyPoliciesBaseUrl: STRUCTURAL_DEFAULTS.privacyPoliciesBaseUrl,
     privacyPoliciesRoot:
       existing.privacyPoliciesRoot ||
       process.env.PRIVACY_POLICIES_ROOT ||
@@ -244,7 +256,7 @@ export async function harvestPublisherDefaultsFromExistingApps({ force = false }
     testerTracks: best.testerTracks.length ? best.testerTracks : ['alpha', 'internal'],
     harvestedFrom: best.harvestedFrom,
     harvestedAt: new Date().toISOString(),
-    note: 'Contact/testers harvested from Play. Privacy URLs are per-app Vercel deploys (manual).',
+    note: 'Contact/testers from Play. Privacy pages on portfolio /privacy-policy/{slug}/.',
   });
 
   console.log(

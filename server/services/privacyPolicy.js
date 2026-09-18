@@ -41,8 +41,8 @@ const SLUG_ALIASES = {
   fuelgreece: 'fuelgr',
 };
 
-/** Vercel project name overrides when folder slug ≠ deploy slug */
-const VERCEL_SLUG_ALIASES = {
+/** Legacy Vercel deploy names — only for migrating old Play listing text */
+const LEGACY_VERCEL_SLUG_ALIASES = {
   doomscroll: 'doomscroll-detox',
   'doomscroll-detox': 'doomscroll-detox',
 };
@@ -59,9 +59,10 @@ export function privacySlugForApp(app) {
   return SLUG_ALIASES[raw] || SLUG_ALIASES[fromId] || raw;
 }
 
+/** @deprecated Portfolio uses folder slug; kept for old Vercel URL rewrites */
 export function vercelPrivacySlugForApp(app) {
   const slug = privacySlugForApp(app);
-  return VERCEL_SLUG_ALIASES[slug] || slug;
+  return LEGACY_VERCEL_SLUG_ALIASES[slug] || slug;
 }
 
 function extractPrimaryColor(app) {
@@ -412,31 +413,51 @@ ${advertisingBlock}
 }
 
 function privacyUrlForSlug(slug) {
-  // Manual Vercel deploys: https://{slug}-privacy-policy.vercel.app/
-  const vercelSlug = VERCEL_SLUG_ALIASES[slug] || slug;
-  return resolvePrivacyPolicyUrl(vercelSlug);
+  return resolvePrivacyPolicyUrl(slug);
+}
+
+function portfolioPrivacyDir(slug) {
+  const defaults = loadPublisherDefaults();
+  const root =
+    defaults.privacyPoliciesPortfolioRoot ||
+    process.env.PRIVACY_POLICIES_PORTFOLIO_ROOT ||
+    'D:/Projects/Next js/next-portfolio/public/privacy-policy';
+  return path.join(root, slug);
+}
+
+function writePrivacyHtml(filePath, html) {
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(filePath, html, 'utf8');
 }
 
 /**
- * Generate (or refresh) a privacy policy HTML page under D:/Projects/privacy-policies/{slug}
- * matching the style of existing Athanasso policies.
+ * Generate (or refresh) a privacy policy HTML page under privacy-policies/{slug}
+ * and mirror it into next-portfolio/public/privacy-policy/{slug} for deploy.
  */
 export async function generatePrivacyPolicy(app, { force = false } = {}) {
   const root = process.env.PRIVACY_POLICIES_ROOT || DEFAULT_ROOT;
   const slug = privacySlugForApp(app);
   const dir = path.join(root, slug);
   const filePath = path.join(dir, 'index.html');
+  const portfolioPath = path.join(portfolioPrivacyDir(slug), 'index.html');
   const url = privacyUrlForSlug(slug);
 
   if (!force && fs.existsSync(filePath)) {
+    // Keep portfolio mirror in sync even when source already exists
+    try {
+      const existing = fs.readFileSync(filePath, 'utf8');
+      writePrivacyHtml(portfolioPath, existing);
+    } catch {}
     console.log(`[Privacy Policy] ✔ Existing policy for ${app.name} at ${filePath}`);
     return {
       skipped: false,
       existed: true,
       slug,
       path: filePath,
+      portfolioPath,
       url,
-      summary: `✔ Privacy HTML ready at ${filePath} · Play URL after Vercel upload: ${url}`,
+      summary: `✔ Privacy HTML ready · ${url}`,
     };
   }
 
@@ -466,8 +487,10 @@ export async function generatePrivacyPolicy(app, { force = false } = {}) {
     contactEmail: defaults.contactEmail,
   });
 
-  fs.writeFileSync(filePath, html, 'utf8');
+  writePrivacyHtml(filePath, html);
+  writePrivacyHtml(portfolioPath, html);
   console.log(`[Privacy Policy] ✔ Wrote ${filePath}`);
+  console.log(`[Privacy Policy] ✔ Mirrored ${portfolioPath}`);
 
   // Persist URL onto store listing metadata
   try {
@@ -495,6 +518,7 @@ export async function generatePrivacyPolicy(app, { force = false } = {}) {
   try {
     savePublisherDefaults({
       privacyPoliciesRoot: root,
+      privacyPoliciesPortfolioRoot: path.dirname(portfolioPrivacyDir(slug)),
     });
   } catch {}
 
@@ -508,6 +532,7 @@ export async function generatePrivacyPolicy(app, { force = false } = {}) {
         {
           slug,
           path: filePath,
+          portfolioPath,
           url,
           generatedAt: new Date().toISOString(),
         },
@@ -523,7 +548,8 @@ export async function generatePrivacyPolicy(app, { force = false } = {}) {
     existed: false,
     slug,
     path: filePath,
+    portfolioPath,
     url,
-    summary: `✔ Generated privacy HTML at ${filePath} · Play URL after Vercel upload: ${url}`,
+    summary: `✔ Generated privacy HTML · ${url}`,
   };
 }

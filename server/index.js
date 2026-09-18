@@ -11,6 +11,7 @@ import { getTesterStatus, enrollTesters, promoteToProduction } from './services/
 import { getLiveMonetizationMetrics } from './services/monetization.js';
 import { startAutoPublishScheduler, getPublishNeeds, drainPendingPublishes } from './services/autoPublish.js';
 import { harvestPublisherDefaultsFromExistingApps } from './services/publisherDefaults.js';
+import { syncAllPrivacyPolicyUrls } from './services/privacyPolicySync.js';
 import {
   getReleaseLifecycleStatus,
   saveReleaseLifecycle,
@@ -105,6 +106,16 @@ app.get('/api/publish/needs', (req, res) => {
     ...getPublishNeeds(a),
   }));
   res.json({ apps, pending: apps.filter((a) => a.action !== 'none') });
+});
+
+// Rewrite Play listing privacy links to portfolio URLs (+ local listing.json)
+app.post('/api/privacy-policies/sync-urls', async (req, res) => {
+  try {
+    const result = await syncAllPrivacyPolicyUrls({ dryRun: Boolean(req.body?.dryRun) });
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Privacy URL sync failed' });
+  }
 });
 
 // Release lifecycle checklist (first upload → RC setup → second upload → closed test → prod)

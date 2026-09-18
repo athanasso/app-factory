@@ -160,15 +160,15 @@ export default function SettingsModal({ onClose, getEngineSettings, updateEngine
                 </div>
 
                 <div className="form-group">
-                  <label>Privacy Policy URL Template (Vercel)</label>
+                  <label>Privacy Policy URL Template (Portfolio)</label>
                   <input
                     type="url"
-                    value={settings.privacyPolicyUrl || 'https://{slug}-privacy-policy.vercel.app/'}
-                    placeholder="https://{slug}-privacy-policy.vercel.app/"
+                    value={settings.privacyPolicyUrl || 'https://athanasopoulos.is-a.dev/privacy-policy/{slug}/'}
+                    placeholder="https://athanasopoulos.is-a.dev/privacy-policy/{slug}/"
                     onChange={(e) => handleChange('privacyPolicyUrl', e.target.value)}
                   />
                   <span className="form-hint">
-                    Per-app Vercel deploys you upload manually. {'{slug}'} becomes e.g. eortologio → https://eortologio-privacy-policy.vercel.app/
+                    Served from next-portfolio public/privacy-policy. {'{slug}'} → e.g. https://athanasopoulos.is-a.dev/privacy-policy/eortologio/
                   </span>
                 </div>
 
