@@ -1,181 +1,158 @@
-# 🏭 App Factory
-**An Industrial-Grade, AI-Driven React Native Application Development & Google Play Automation Engine**
+# App Factory
 
-![Node.js](https://img.shields.io/badge/Node.js-20.x-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
-![React 19](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black)
-![Vite](https://img.shields.io/badge/Vite-6.x-646CFF?style=for-the-badge&logo=vite&logoColor=white)
-![Google Play API v3](https://img.shields.io/badge/Google_Play_API-v3-00B2FF?style=for-the-badge&logo=googleplay&logoColor=white)
-![Google Gemini AI](https://img.shields.io/badge/Google_Gemini-Powered-8E75B2?style=for-the-badge&logo=google&logoColor=white)
-![WebSockets](https://img.shields.io/badge/Real--time-WebSockets-FF6600?style=for-the-badge)
+AI-assisted React Native → Google Play automation: scan local apps, generate ASO copy, build/reuse AABs, upload via Play Developer API v3, sync privacy pages, and run Personal-account 14-day closed testing with [TheClosedTest](https://github.com/neerajlovecyber/TheClosedTest-apk).
 
----
-
-## 🌟 Overview
-
-**App Factory** is an end-to-end orchestration command center designed to automate the entire lifecycle of React Native applications—from concept generation and App Store Optimization (ASO) to Android App Bundle (`.aab`) verification, live Google Play Console billing telemetry, and real-time dashboard analytics.
-
-By bridging your local React Native codebases (`PROJECTS_ROOT`) with **Google Gemini AI** and the **Google Play Developer API v3**, App Factory allows developers to scale, publish, and monitor dozens of production titles seamlessly from a unified dark-mode glassmorphism dashboard.
+![Node.js](https://img.shields.io/badge/Node.js-18%2B-339933?logo=nodedotjs&logoColor=white)
+![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
+![Vite](https://img.shields.io/badge/Vite-5-646CFF?logo=vite&logoColor=white)
+![Play API](https://img.shields.io/badge/Play_API-v3-00B2FF?logo=googleplay&logoColor=white)
+![Gemini](https://img.shields.io/badge/Gemini-AI-8E75B2?logo=google&logoColor=white)
 
 ---
 
-## ✨ Core Capabilities
+## Overview
 
-### 1. 🤖 Automated AI Synthesis & ASO Pipeline
-- **Deep Gemini AI Integration**: Uses Google Gemini (`gemini-flash-latest`) to generate tailored App Store listings, high-conversion titles, keywords, short & full promotional descriptions (up to 3,850 chars), and eye-catching slogans.
-- **Global Localization Engine**: Streams translation transcreation batches into **49 major global Play Store markets** in real time, persisting all structured listings directly to your file system (`data/apps_content/<id>/locales/`).
-- **AI Changelogs**: Automatically composes feature changelogs (`What's New`) and release notes for upcoming version releases.
+App Factory connects a folder of React Native projects (`PROJECTS_ROOT`) to:
 
-### 2. 📂 Local File-System Discovery & Codebase Verification
-- **Automatic RN Project Scanners**: Continually scans your published codebases directory (default: `D:/Projects/RN/published` or configured via `PROJECTS_ROOT`).
-- **Deep Application ID Parsing**: Aggressively extracts authentic Android Package IDs (e.g., `com.athanasso.doomscrolldetox`) directly from native configs (`app.json`, `app.config.js`, `AndroidManifest.xml`, and `build.gradle.kts`).
-- **Physical Asset Extraction**: Automatically searches asset hierarchies (`/assets`, `/mipmap`, `/drawable`) to locate and mount physical high-resolution application PNG icons onto the frontend dashboard.
-- **Codebase Integrity Audits**: Validates package dependencies (`package.json`), native `/android` build structures, and active `/node_modules`.
+- **Google Gemini** — titles, listings, translations, changelogs  
+- **Play Developer API v3** — AAB upload, listings, tracks, testers, overview  
+- **Local Gradle** — `bundleRelease` when no AAB exists (reuses existing `.aab` otherwise)  
+- **ADB + TheClosedTest** — Personal-account 14-day / 12-tester peer swaps from a signed-in phone  
 
-### 3. 🔨 Gradle Build & Keystore Auditing
-- **Release Keystore Inspection**: Recursively searches `/android` build folders for cryptographically secure release keystores (`*.keystore`, `*.jks`, `*.p12`) and logs exact aliases and modification timestamps.
-- **Android App Bundle (AAB) Verification**: Inspects native Gradle output directories (`/android/app/build/outputs/bundle/release/`) for pre-compiled production release binaries (`.aab`) and computes their precise file footprints.
-
-### 4. 💰 Live Monetization Engine & Play Console Direct Sync (API v3)
-- **Direct Play Store Billing**: Purged all third-party RevenueCat dependencies. Live auto-renewing subscriptions, billing durations (`/ mo`, `/ yr`), and prices are parsed directly from Google Play Developer API v3 (`monetization.subscriptions.list`).
-- **Google Cloud Storage Financial Reports**: Supports connecting Google Play's automated CSV sales reports via Cloud Storage buckets (`googlePlay.reportBucket` in `data/credentials/monetization.json`) for downloading daily & monthly transaction dollar earnings.
-- **Catalog Baseline & Manual Sales Preservation**: Automatically computes baseline catalog subscription MRR across active plans and preserves verified app sales across database refreshes.
-- **Google AdMob Network Reporting**: Pulls impressions, eCPM, and ad network earnings via direct AdMob API integrations.
-
-### 5. ⚡ Real-Time WebSocket Architecture
-- **Interactive UI Streaming**: A dedicated WebSocket layer (`ws://localhost:3001/ws`) pushes real-time step execution progress, task statuses, and server logs straight to the frontend without requiring page refreshes.
+Dashboard: Vite React UI + Express API (`:3001`) with live WebSocket progress.
 
 ---
 
-## 🏗️ Technical Architecture
+## Features
+
+### Pipeline & AutoPublish
+- Deep-scan nested RN apps under `PROJECTS_ROOT`
+- Full first-upload pipeline: research → assets → AAB → Play upload
+- **Reuses existing release AABs** — does not rebuild unless missing or RevenueCat second upload
+- AutoPublish only queues **first upload**, **RC second upload**, or a newer AAB than last upload (no churn on already-live apps)
+- Play track sync sets **Published** when production exists; clears stale **Updating** after crashed jobs
+- Windows-safe `apps.json` writes (copy overwrite, no fragile `rename`)
+
+### Store listing & privacy
+- Harvest contact email / website / tester Google Groups from existing Play apps
+- Privacy HTML under portfolio: `https://athanasopoulos.is-a.dev/privacy-policy/{slug}/`
+- Niche ASO titles (blocks generic junk like “Smart Daily Tool”)
+- Screenshots / feature graphics via Expo web + Chrome (system Chrome if Puppeteer cache missing)
+
+### Personal account closed testing
+- Seeds `developers-community-official@googlegroups.com` on closed tracks
+- **TheClosedTest** panel (Personal accounts, apps not in production):
+  - **Run full cycle** — register app (skip if exists), request unique swaps, accept inbound, save partners  
+  - **Daily ADB proofs** — open partner apps → screenshot → gallery / upload path  
+  - Uses the **signed-in phone session over ADB** (no JWT required; optional Clerk JWT for faster REST)
+- Unique partners tracked globally so the same ClosedTest user/package is not reused across your apps
+
+### Monetization
+- Play IAP / subscription catalog via API v3  
+- Optional AdMob reporting (needs SA permissions)  
+- Optional GCS earnings bucket config  
+
+---
+
+## Architecture
 
 ```
 app-factory/
-├── data/                    # JSON database & localized AI content repositories (gitignored)
-│   ├── apps.json            # Persistent real-time application database
-│   ├── credentials/         # Runtime monetization config (monetization.json)
-│   └── apps_content/        # Persistent AI ASO copy, translations, & build profiles
-├── server/                  # Node.js + Express Backend Engine (Port 3001)
-│   ├── db/
-│   │   └── store.js         # File-system project scanners, db helper & state manager
+├── data/                         # gitignored runtime state
+│   ├── apps.json
+│   ├── credentials/              # publisher-defaults, monetization, closed-test
+│   ├── apps_content/             # listings, media, submission records
+│   └── closed_test/              # exchange state + daily proof screenshots
+├── server/
+│   ├── db/store.js               # scan, status, crash-safe save, track sync
 │   ├── services/
-│   │   ├── build.js         # Codebase verification, keystore auditing, and AAB checker
-│   │   ├── content.js       # Google Gemini AI ASO copy & product specification synthesis
-│   │   ├── media.js         # Physical icon extraction & promotional asset generators
-│   │   ├── monetization.js  # Google Play Console IAP catalog, GCS report sync & AdMob sync
-│   │   ├── monitoring.js    # Telemetry tracking & crash analytics monitors
-│   │   ├── playConsole.js   # Google Play Developer API v3 authentication & review synchronizer
-│   │   ├── queue.js         # Asynchronous pipeline execution & WebSocket dispatcher
-│   │   ├── submission.js    # Play Store release packaging and track staging
-│   │   ├── translation.js   # Multi-locale transcreation string streaming
-│   │   └── websocket.js     # WebSocket streaming server implementation
-│   └── index.js             # REST API routes & server initialization
-├── src/                     # React 19 + Vite Frontend UI (Port 5173 / 3000)
-│   ├── components/
-│   │   ├── Header.jsx       # Top command navigation bar & quick action trigger modal openers
-│   │   ├── Sidebar.jsx      # Searchable application directory & status filter tabs
-│   │   ├── PipelineView.jsx # Interactive 16-step automation execution visualizer
-│   │   ├── StatsPanel.jsx   # Live KPI metrics overview (MRR, Ad Revenue, downloads, ratings)
-│   │   ├── AdRevenueModal.jsx # Dedicated AdMob & Google Play IAP analytics modal
-│   │   ├── NewAppModal.jsx  # Interactive creation modal for starting automated RN pipelines
-│   │   ├── SettingsModal.jsx# Manage Google Cloud service accounts, AI models, and build roots
-│   │   ├── AnalyticsModal.jsx# Global telemetry hub and published application catalog table
-│   │   └── EngineBar.jsx    # Real-time WebSocket connection status & backend stream ticker
-│   ├── hooks/
-│   │   └── useAppEngine.js  # React hooks for API management & WebSocket stream bindings
-│   └── App.jsx              # Main application container & view router
-├── monetization.example.json# Example monetization config (copy to data/credentials/monetization.json)
-├── .env                     # Environment settings & API secrets
-├── service-account.json     # Google Cloud OAuth / Play Console IAM service account credentials
-└── package.json             # NPM task scripts & dependencies
+│   │   ├── autoPublish.js        # scheduled first/second upload only
+│   │   ├── build.js              # Gradle AAB (skip if exists)
+│   │   ├── closedTestExchange.js # ADB + optional API closed-test cycle
+│   │   ├── closedTestApi.js      # TheClosedTest REST client
+│   │   ├── media.js              # screenshots / feature graphic (system Chrome)
+│   │   ├── privacyPolicy*.js     # portfolio privacy HTML
+│   │   ├── publisherDefaults.js  # harvest overview + testers
+│   │   ├── queue.js / submission.js / playConsole.js / …
+│   └── index.js
+└── src/                          # Vite dashboard
 ```
 
 ---
 
-## ⚙️ Getting Started
+## Setup
 
-### 1. Prerequisites
-- **Node.js**: v18.0.0 or higher
-- **Android SDK & Java (JDK 17+)**: Required if triggering live Gradle builds locally
-- **Google Play Developer Account**: For OAuth service account IAM access
-- **Google Gemini API Key**: For AI content generation and translation pipelines
+### Prerequisites
+- Node.js 18+
+- JDK 17+ / Android SDK (for Gradle builds)
+- Google Play service account JSON with app access
+- Gemini API key
+- Optional: USB-debugging phone with TheClosedTest installed & signed in
 
-### 2. Environment Configuration
-Create or modify the `.env` file in the root directory:
+### Environment (`.env`)
 
 ```env
-# Backend API Port
 PORT=3001
+GEMINI_API_KEY=...
+PROJECTS_ROOT=D:/Projects/RN/published
+PLAY_CONSOLE_KEY_PATH=service-account.json
 
-# Google Gemini Pro / Flash API Key
-GEMINI_API_KEY="AIzaSy...your-actual-gemini-api-key"
-
-# Root directory where your published React Native projects reside on disk
-PROJECTS_ROOT="D:/Projects/RN/published"
-
-# Path to your authenticated Google Cloud Service Account JSON
-PLAY_CONSOLE_KEY_PATH="service-account.json"
+# Optional privacy / portfolio
+PRIVACY_POLICIES_PORTFOLIO_ROOT=D:/Projects/Next js/next-portfolio/public/privacy-policy
+PRIVACY_POLICY_URL_TEMPLATE=https://athanasopoulos.is-a.dev/privacy-policy/{slug}/
 ```
 
-### 3. Monetization Configuration
-Copy `monetization.example.json` to `data/credentials/monetization.json`:
+### Monetization (optional)
 
-```json
-{
-  "adMob": {
-    "publisherId": "pub-7276304756319433",
-    "useServiceAccount": true
-  },
-  "googlePlay": {
-    "reportBucket": "gs://pubsite_prod_8367979428487528590/earnings/"
-  }
-}
-```
+Copy `monetization.example.json` → `data/credentials/monetization.json`.
 
-### 4. Service Account Setup (Google Play Console)
-To enable live telemetry and Play Console billing synchronization:
-1. Go to the **Google Cloud Console** and create a Service Account under your developer project.
-2. Grant the service account **View app information**, **Manage production / testing releases**, and **Storage Object Viewer** (for GCS reports) in Google Cloud & Play Console.
-3. Download the generated private key JSON file and place it in the root of the repository as `service-account.json`.
+### Service account
+1. Create a GCP service account; enable **Google Play Android Developer API**  
+2. In Play Console → Users & permissions → invite the SA email with release + app access  
+3. Save the key as `service-account.json` (or path in `PLAY_CONSOLE_KEY_PATH`)
 
 ---
 
-## 🚀 Running App Factory
+## Run
 
-### Start Both Backend Server & Vite Dev Server
-Open two terminal windows:
-
-**Terminal 1 — Backend API & Telemetry Engine (Port 3001):**
 ```bash
-npm run server
+npm install
+npm run server    # API + WebSocket :3001
+npm run dev       # UI :5173
 ```
 
-**Terminal 2 — React Frontend Dashboard (Port 5173):**
-```bash
-npm run dev
-```
+Open `http://localhost:5173`.
 
-Open your browser and navigate to **`http://localhost:5173`** to access the dashboard!
+Settings → set **Personal** vs **Organization**, projects root, and auto-upload. For closed testing, connect a phone (`adb devices`) with TheClosedTest logged in.
 
 ---
 
-## 🔌 API Reference & Endpoints
+## API (high level)
 
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| **GET** | `/api/apps` | Retrieves all detected applications and aggregated store KPI statistics. |
-| **POST** | `/api/apps` | Creates a new application entry and initializes an automated pipeline template. |
-| **GET** | `/api/apps/:id` | Returns deep pipeline details, verified file paths, and current queue state. |
-| **PUT** | `/api/apps/:id` | Dynamically updates an application's revenue, downloads, rating, or metadata with live WebSocket broadcast. |
-| **GET** | `/api/apps/:id/icon` | Streams the physical PNG icon directly from the app's React Native asset directory. |
-| **POST** | `/api/apps/:id/pipeline/run`| Triggers an asynchronous WebSocket-streamed automation job for the specified app. |
-| **GET** | `/api/monetization/all` | Retrieves aggregated Google AdMob breakdown and Google Play IAP/subscription catalog numbers. |
-| **GET** | `/api/apps/:id/monetization`| Retrieves per-app AdMob ad unit performance and active SKU subscriptions. |
-| **GET** | `/api/settings` | Retrieves current Google Play IAM credentials, engine paths, and AI preferences. |
-| **POST** | `/api/settings` | Updates and persists runtime settings without server restarts. |
-| **POST** | `/api/refresh` | Re-scans `PROJECTS_ROOT` for newly created or modified local React Native folders. |
-| **WS** | `ws://localhost:3001/ws`| Interactive bidirectional stream pushing real-time step execution updates. |
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/api/apps` | Apps + stats |
+| POST | `/api/apps/sync-tracks` | Refresh production/alpha detection |
+| POST | `/api/apps/reconcile-status` | Clear stuck Updating badges |
+| POST | `/api/apps/:id/pipeline/run` | Start pipeline (`first_upload` / `update` / `second_upload`) |
+| POST | `/api/publish/auto` | Drain AutoPublish queue |
+| GET/POST | `/api/apps/:id/testing/*` | 14-day tester card status / enroll / promote |
+| GET | `/api/closed-test` | ClosedTest exchange status |
+| POST | `/api/apps/:id/closed-test/full-cycle` | Register + unique swaps (ADB/API) |
+| POST | `/api/closed-test/daily-proofs` | Daily partner screenshots + upload |
+| POST | `/api/privacy-policies/sync-urls` | Sync portfolio privacy URLs into listings |
+| WS | `ws://localhost:3001/ws` | Live pipeline events |
 
 ---
 
-## 🛡️ License & Legal Notice
-This repository and automation engine are designed for proprietary app factory deployment. Always ensure automated Play Store submissions conform to Google Play Developer Program Policies and User Data Data Safety regulations.
+## Notes
+
+- **New Play apps** must be created once in Play Console (API cannot create the package shell). After that, factory uploads AABs and syncs overview/listings.  
+- **Personal accounts** need 14 days × ≥12 testers before production; Organization accounts can go direct.  
+- AutoPublish will not keep re-uploading apps that already have a successful binary / production track. Use **Run Pipeline** manually for intentional updates.  
+
+---
+
+## License
+
+Proprietary factory tooling. Automated Play submissions must comply with [Google Play Developer Program Policies](https://play.google.com/about/developer-content-policy/).
