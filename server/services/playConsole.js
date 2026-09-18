@@ -70,6 +70,68 @@ export async function fetchPlayStoreTitle(packageName) {
   return null;
 }
 
+/**
+ * Detect which Play tracks have releases for a package.
+ * production=true means the app is live (or rolled out) on production — use this
+ * instead of assuming every folder under RN/published is production-ready.
+ */
+export async function fetchPlayTrackPresence(packageName) {
+  const publisher = getPublisher();
+  if (!publisher || !packageName) {
+    return { ok: false, packageExists: false, production: false, tracks: {} };
+  }
+
+  try {
+    const editRes = await publisher.edits.insert({ packageName });
+    const editId = editRes.data.id;
+    let tracks = [];
+    try {
+      const tracksRes = await publisher.edits.tracks.list({ packageName, editId });
+      tracks = tracksRes.data.tracks || [];
+    } finally {
+      await publisher.edits.delete({ packageName, editId }).catch(() => {});
+    }
+
+    const summary = {};
+    for (const t of tracks) {
+      const name = t.track || 'unknown';
+      const releases = t.releases || [];
+      const hasRelease = releases.some(
+        (r) =>
+          Array.isArray(r.versionCodes) &&
+          r.versionCodes.length > 0 &&
+          ['completed', 'inProgress', 'halted'].includes(String(r.status || '').toLowerCase())
+      );
+      summary[name] = {
+        hasRelease,
+        statuses: releases.map((r) => r.status).filter(Boolean),
+        versionCodes: releases.flatMap((r) => r.versionCodes || []),
+      };
+    }
+
+    const production = Boolean(summary.production?.hasRelease);
+    return {
+      ok: true,
+      packageExists: true,
+      production,
+      alpha: Boolean(summary.alpha?.hasRelease),
+      internal: Boolean(summary.internal?.hasRelease),
+      beta: Boolean(summary.beta?.hasRelease),
+      tracks: summary,
+    };
+  } catch (err) {
+    const msg = err.message || '';
+    const missing = /package not found|404|not found/i.test(msg);
+    return {
+      ok: false,
+      packageExists: !missing,
+      production: false,
+      tracks: {},
+      error: msg,
+    };
+  }
+}
+
 async function commitEdit(publisher, packageName, editId) {
   try {
     return await publisher.edits.commit({ packageName, editId });

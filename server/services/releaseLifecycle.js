@@ -202,15 +202,18 @@ export function getReleaseLifecycleStatus(app) {
     done:
       testing?.statusState === 'COMPLETED' ||
       testing?.statusState === 'READY_FOR_PROMOTION' ||
-      app.status === 'Published',
+      app.status === 'Published' ||
+      Boolean(app.playProduction),
     required: true,
-    note: `Day ${testing?.currentDay || 0}/${testing?.totalDays || 14} · ${testing?.uploaded ? 'uploaded' : 'not uploaded yet'}`,
+    note: `Day ${testing?.currentDay || 0}/${testing?.totalDays || 14} · ${
+      app.playProduction ? 'Play production' : testing?.uploaded ? 'uploaded' : 'not uploaded yet'
+    }`,
   });
 
   checklist.push({
     id: 'promote_production',
     title: 'Promote alpha → production',
-    done: app.status === 'Published' || Boolean(life.promotedAt),
+    done: app.status === 'Published' || Boolean(life.promotedAt) || Boolean(app.playProduction),
     required: true,
     note: 'Use Tester card “Promote to Production” after the 14-day window.',
   });

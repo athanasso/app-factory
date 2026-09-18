@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { fetchLiveAppMetrics, fetchPlayStoreTitle } from '../services/playConsole.js';
+import { fetchLiveAppMetrics, fetchPlayStoreTitle, fetchPlayTrackPresence } from '../services/playConsole.js';
 import { getLiveMonetizationMetrics } from '../services/monetization.js';
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -141,12 +141,14 @@ const getCategory = (appPath, appName, displayName, packageName) => {
   // Semantic topic clustering fallback based on available app metadata
   const text = `${appName} ${displayName || ''} ${packageName || ''}`.toLowerCase();
   if (/game|play|flappy|floppy|derpy|fly|arcade|jump|puzzle|shooter|ball|level/.test(text)) return 'Games';
+  if (/fuel|gas|petrol|diesel|pump|fuelgr|fuelgreece/.test(text)) return 'Travel & Local';
+  if (/astro|horoscope|zodiac|natal|star sign|astrology|astralogos/.test(text)) return 'Lifestyle';
   if (/transit|bus|metro|train|vehicle|vehiclo|car|auto|gps|map|travel|ride|navigation|flight/.test(text)) return 'Travel & Local';
   if (/calendar|eortologio|date|nameday|holiday|book|dictionary|reference|bible|wiki|encyclopedia/.test(text)) return 'Books & Reference';
   if (/media|video|movie|cinema|stream|player|tv|photo|gallery|camera|wallpaper|audio|music/.test(text)) return 'Media & Video';
-  if (/downloader|widget|tool|utility|cleaner|file|compress|calculator|qr|barcode|battery|settings/.test(text)) return 'Tools';
+  if (/downloader|fetchit|widget|tool|utility|cleaner|file|compress|calculator|qr|barcode|battery|settings/.test(text)) return 'Tools';
   if (/social|chat|message|unfollow|follower|instunfollowers|tweet|community|share/.test(text)) return 'Social';
-  if (/news|scroll|doomscroll|reader|rss|feed|magazine|blog|daily/.test(text)) return 'News & Magazines';
+  if (/news|scroll|doomscroll|reader|rss|feed|magazine|blog/.test(text)) return 'News & Magazines';
   if (/fitness|workout|health|run|gym|cal|steps/.test(text)) return 'Health & Fitness';
   if (/finance|wallet|budget|money|bank|pay|crypto/.test(text)) return 'Finance';
   return 'Productivity';
@@ -590,11 +592,49 @@ async function syncLiveTelemetry() {
     if (app.packageName && app.isReal) {
       try {
         const rawTitle = await fetchPlayStoreTitle(app.packageName);
-        const liveTitle = rawTitle ? rawTitle.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : null;
+        const liveTitle = rawTitle
+          ? rawTitle.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+          : null;
         if (liveTitle && (!app.name || app.name.toLowerCase() === app.packageName.toLowerCase())) {
           app.name = liveTitle;
           saveDb();
         }
+
+        // Detect real Play tracks — production presence is the source of truth
+        const tracks = await fetchPlayTrackPresence(app.packageName);
+        if (tracks?.ok || tracks?.packageExists) {
+          app.playTracks = {
+            production: Boolean(tracks.production),
+            alpha: Boolean(tracks.alpha),
+            internal: Boolean(tracks.internal),
+            beta: Boolean(tracks.beta),
+            checkedAt: new Date().toISOString(),
+          };
+          app.playProduction = Boolean(tracks.production);
+          app.playPackageExists = tracks.packageExists !== false;
+
+          if (tracks.production) {
+            // Don't interrupt an in-flight factory update job label, but mark production-ready
+            if (
+              app.status !== AppStatus.UPDATING &&
+              app.status !== 'Updating' &&
+              app.status !== AppStatus.FAILED &&
+              app.status !== 'Failed'
+            ) {
+              app.status = AppStatus.PUBLISHED;
+            }
+          }
+          saveDb();
+          console.log(
+            `[Play Tracks] ${app.packageName}: production=${Boolean(tracks.production)} alpha=${Boolean(tracks.alpha)} status=${app.status}`
+          );
+        } else if (tracks && tracks.packageExists === false) {
+          app.playProduction = false;
+          app.playPackageExists = false;
+          app.playTracks = { production: false, checkedAt: new Date().toISOString(), error: tracks.error };
+          saveDb();
+        }
+
         const metrics = await fetchLiveAppMetrics(app.packageName);
         if (metrics && metrics.reviewsCount > 0) {
           app.rating = metrics.rating;
@@ -609,6 +649,49 @@ async function syncLiveTelemetry() {
       } catch (err) {}
     }
   }
+}
+
+/** Re-check Play production/alpha tracks for one or all apps (API). */
+export async function syncPlayTrackStatuses(appId = null) {
+  const targets = appId ? db.apps.filter((a) => a.id === appId) : db.apps.filter((a) => a.isReal && a.packageName);
+  const results = [];
+  for (const app of targets) {
+    const tracks = await fetchPlayTrackPresence(app.packageName);
+    if (tracks?.ok || tracks?.packageExists) {
+      app.playTracks = {
+        production: Boolean(tracks.production),
+        alpha: Boolean(tracks.alpha),
+        internal: Boolean(tracks.internal),
+        beta: Boolean(tracks.beta),
+        checkedAt: new Date().toISOString(),
+      };
+      app.playProduction = Boolean(tracks.production);
+      app.playPackageExists = tracks.packageExists !== false;
+      if (
+        tracks.production &&
+        app.status !== AppStatus.UPDATING &&
+        app.status !== 'Updating' &&
+        app.status !== AppStatus.FAILED &&
+        app.status !== 'Failed'
+      ) {
+        app.status = AppStatus.PUBLISHED;
+      }
+      saveDb();
+    } else if (tracks) {
+      app.playProduction = false;
+      app.playPackageExists = tracks.packageExists !== false;
+      app.playTracks = { production: false, checkedAt: new Date().toISOString(), error: tracks.error };
+      saveDb();
+    }
+    results.push({
+      id: app.id,
+      packageName: app.packageName,
+      status: app.status,
+      playProduction: app.playProduction,
+      tracks: app.playTracks,
+    });
+  }
+  return results;
 }
 
 export const saveDb = () => {

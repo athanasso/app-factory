@@ -31,6 +31,7 @@ function isExplicitlyCompleted(savedStatus = {}) {
   return (
     Boolean(savedStatus.promotedAt) ||
     reason === 'app_status_published' ||
+    reason === 'play_production_track' ||
     reason === 'promoted' ||
     reason === 'manual_complete'
   );
@@ -88,8 +89,14 @@ export const getTesterStatus = (appId) => {
   }
 
   const published = isPublishedStatus(app.status);
+  const onProduction = Boolean(app.playProduction);
   const explicitComplete = isExplicitlyCompleted(savedStatus);
-  const uploaded = hasSuccessfulUpload(app.id);
+  const uploaded =
+    hasSuccessfulUpload(app.id) ||
+    onProduction ||
+    Boolean(app.playTracks?.alpha) ||
+    Boolean(app.playTracks?.internal) ||
+    Boolean(app.playPackageExists && app.playTracks);
 
   const startTimestamp = savedStatus.startedAt
     ? new Date(savedStatus.startedAt).getTime()
@@ -102,7 +109,7 @@ export const getTesterStatus = (appId) => {
   );
 
   let statusState;
-  if (published || explicitComplete) {
+  if (published || onProduction || explicitComplete) {
     statusState = 'COMPLETED';
   } else if (!uploaded && !savedStatus.startedAt) {
     // Never successfully uploaded — closed test hasn't started
@@ -118,13 +125,13 @@ export const getTesterStatus = (appId) => {
     statusState = 'IN_PROGRESS';
   }
 
-  // Persist COMPLETED only when the app is actually Published (production)
-  if (published && savedStatus.statusState !== 'COMPLETED') {
+  // Persist COMPLETED when Play production track (or Published status) is confirmed
+  if ((published || onProduction) && savedStatus.statusState !== 'COMPLETED') {
     try {
       const next = {
         ...savedStatus,
         statusState: 'COMPLETED',
-        completedReason: 'app_status_published',
+        completedReason: onProduction ? 'play_production_track' : 'app_status_published',
         completedAt: savedStatus.completedAt || new Date().toISOString(),
         startedAt: savedStatus.startedAt || new Date(startTimestamp).toISOString(),
         enrolledTesters: savedStatus.enrolledTesters || 12,

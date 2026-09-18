@@ -174,51 +174,135 @@ Respond in strict JSON format:
   }
 };
 
-// Craft ASO-optimized Play Store title by appending top category search keywords within the 30-character limit
-export function craftAsoTitle(brandName, category = 'Tools') {
-  const cleanBrand = brandName.trim();
-  if (cleanBrand.length > 26 && cleanBrand.length <= 30) return cleanBrand.slice(0, 30);
-  if (cleanBrand.includes(':') && cleanBrand.length <= 30) return cleanBrand;
+const GENERIC_TITLE_JUNK =
+  /\b(smart daily tool|fast & handy tool|smart pocket tool|mobile utility|quick productivity|task organizer|utility & tools|smart tool)\b/i;
 
-  let name = cleanBrand.split(':')[0].split(' - ')[0].trim();
-  const asoSuffixes = {
-    'Games': ['Fun Arcade Game', 'Tap Flying Game', 'Arcade Game', 'Fun Game', 'Arcade'],
-    'Travel & Local': ['Live Transit & Map', 'Transit & Map', 'Live Tracker', 'Map', 'Transit'],
-    'Books & Reference': ['Calendar & Dates', 'Reference & Book', 'Quick Guide', 'Guide'],
-    'Media & Video': ['HD Player & Track', 'HD Media Player', 'Video Player', 'Player'],
-    'Tools': ['Fast & Handy Tool', 'Utility & Tools', 'Smart Tool', 'Utility', 'Tool'],
-    'Social': ['Followers & Chat', 'Social Analytics', 'Chat & Share', 'Social'],
-    'News & Magazines': ['Daily RSS News', 'News Reader', 'Daily Feed', 'News'],
-    'Productivity': ['Smart Daily Tool', 'Quick Productivity', 'Task Organizer', 'Tasks']
+/** Build a Play title from brand + niche words, never generic "Smart Daily Tool"-style junk. */
+export function craftAsoTitle(brandName, category = 'Tools', app = null) {
+  const raw = String(brandName || 'App').trim();
+  let cleaned = raw.replace(GENERIC_TITLE_JUNK, '').replace(/\s{2,}/g, ' ').replace(/:\s*$/, '').trim();
+  if (cleaned.includes(':') && cleaned.length <= 30 && !GENERIC_TITLE_JUNK.test(cleaned)) {
+    return cleaned.slice(0, 30);
+  }
+
+  let name = cleaned.split(':')[0].split(' - ')[0].trim() || 'App';
+  // Prefer the factory display name when available
+  if (app?.name && !GENERIC_TITLE_JUNK.test(app.name)) {
+    const display = String(app.name).split(':')[0].trim();
+    if (display) name = display;
+  }
+
+  const nicheFromApp = `${app?.name || ''} ${app?.description || ''} ${app?.packageName || ''} ${category}`.toLowerCase();
+  const nicheSuffixes = [];
+  if (/astro|horoscope|zodiac|star|natal/.test(nicheFromApp)) {
+    nicheSuffixes.push('Daily Horoscope', 'Birth Chart', 'Zodiac');
+  }
+  if (/fuel|gas|petrol|diesel|pump/.test(nicheFromApp)) {
+    nicheSuffixes.push('Gas Prices GR', 'Fuel Prices', 'Petrol Map');
+  }
+  if (/fetch|download|video|media/.test(nicheFromApp)) {
+    nicheSuffixes.push('HD Video Downloader', 'Media Downloader', 'Downloader');
+  }
+  if (/transit|bus|metro|map/.test(nicheFromApp)) {
+    nicheSuffixes.push('Live Bus Map', 'Transit Map', 'Live Map');
+  }
+  if (/unfollow|follower|instagram/.test(nicheFromApp)) {
+    nicheSuffixes.push('Follower Tracker', 'Unfollowers');
+  }
+  if (/doomscroll|blocker|detox|focus/.test(nicheFromApp)) {
+    nicheSuffixes.push('App Blocker', 'Focus Timer');
+  }
+  if (/wallpaper/.test(nicheFromApp)) {
+    nicheSuffixes.push('Live Wallpaper', 'Video Wallpaper');
+  }
+  if (/vehicle|car|trip|fuel log/.test(nicheFromApp)) {
+    nicheSuffixes.push('Car Maintenance', 'Trip Log');
+  }
+  if (/beach|sea|galazio/.test(nicheFromApp)) {
+    nicheSuffixes.push('Beach Weather', 'Sea Weather');
+  }
+  if (/photo|widget/.test(nicheFromApp)) {
+    nicheSuffixes.push('Home Screen Pic', 'Photo Widget');
+  }
+  if (/movie|tv|tracker|watchlist/.test(nicheFromApp)) {
+    nicheSuffixes.push('Movie & TV Log', 'Watchlist');
+  }
+  if (/eorto|nameday|calendar/.test(nicheFromApp)) {
+    nicheSuffixes.push('Name Day Calendar', 'Greek Namedays');
+  }
+  if (/game|flappy|floppy|arcade/.test(nicheFromApp)) {
+    nicheSuffixes.push('Fun Arcade Game', 'Arcade Game');
+  }
+
+  const categorySuffixes = {
+    Games: ['Arcade Game', 'Fun Game'],
+    'Travel & Local': ['Live Map', 'Transit'],
+    'Books & Reference': ['Calendar', 'Guide'],
+    'Media & Video': ['HD Player', 'Video'],
+    Tools: ['Downloader', 'Utility'],
+    Social: ['Tracker', 'Analytics'],
+    'News & Magazines': ['Reader', 'Feed'],
+    Productivity: ['Organizer', 'Planner'],
+    Lifestyle: ['Daily Guide'],
+    Finance: ['Prices', 'Tracker'],
   };
 
-  const suffixes = asoSuffixes[category] || ['Smart Pocket Tool', 'Mobile Utility', 'Fast App'];
+  const suffixes = [...nicheSuffixes, ...(categorySuffixes[category] || ['App'])];
   for (const s of suffixes) {
     const candidate = `${name}: ${s}`;
-    if (candidate.length <= 30) return candidate;
+    if (candidate.length <= 30 && !GENERIC_TITLE_JUNK.test(candidate)) return candidate;
   }
-  return cleanBrand.slice(0, 30);
+  if (`${name} App`.length <= 30) return `${name} App`;
+  return name.slice(0, 30);
+}
+
+function isBadStoreTitle(title) {
+  if (!title || typeof title !== 'string') return true;
+  if (title.length > 30) return true;
+  if (GENERIC_TITLE_JUNK.test(title)) return true;
+  // Bare brand with no niche signal is weak but allowed if short; force rewrite only for junk
+  return false;
 }
 
 // 3. Generate Play Store Listing Description
 export const generateDescription = async (app) => {
   const listing = getListing(app.id) || {};
-  if (listing && listing.fullDescription && listing.title && !listing.title.toLowerCase().includes('flappy') && !listing.fullDescription.toLowerCase().includes('flappy')) {
-    console.log(`[AI Content] ✔ Found existing store listing copy for ${app.name} ("${listing.title}") -> Retaining from initial copywriting`);
+  const existingTitle = listing.title || '';
+  const existingOk =
+    listing.fullDescription &&
+    existingTitle &&
+    !isBadStoreTitle(existingTitle) &&
+    !existingTitle.toLowerCase().includes('flappy') &&
+    !String(listing.fullDescription).toLowerCase().includes('flappy');
+
+  if (existingOk) {
+    console.log(`[AI Content] ✔ Found existing store listing copy for ${app.name} ("${listing.title}") -> Retaining`);
     return listing;
   }
+
+  // Prefer the live Play title when the app already has a listing (avoids overwriting good names)
+  let preferredTitle = null;
+  try {
+    const { fetchPlayStoreTitle } = await import('./playConsole.js');
+    preferredTitle = await fetchPlayStoreTitle(app.packageName);
+    if (preferredTitle && isBadStoreTitle(preferredTitle)) preferredTitle = null;
+  } catch {}
+
   console.log(`[AI Content] Running Gemini Store Listing Copywriter & Policy Compliance Audit for ${app.name}...`);
   const model = getModel();
   const keywords = listing.seoMetadata?.primaryKeywords?.join(', ') || app.category;
+  const brandHint = preferredTitle || app.name;
 
   const prompt = `You are a master Google Play Store copywriter and senior App Store compliance officer known for viral organic conversion rates and zero policy rejections.
 Write the official Google Play Store store listing text for the Android app:
-Name: "${app.name}"
+Name: "${brandHint}"
 Category: "${app.category}"
+Package: ${app.packageName || 'n/a'}
+Description hint: ${(app.description || '').slice(0, 300)}
 Target ASO Keywords: ${keywords}
 
 Requirements according to Google Play guidelines:
-1. "title": MUST follow Play Store ASO Best Practices by combining the brand name with high-volume search keywords from the app's niche/category (e.g., "Floppy Flyer: Fun Arcade Game", "Vehiclo: Live Transit & Map", or "Eortologio: Calendar & Dates"). NEVER return just a bare brand name alone! Must strictly stay within Google Play's 30-character hard limit!
+1. "title": Combine the REAL brand name with a niche-specific subtitle (e.g. "AstroLogos: Daily Horoscope", "Fuel Greece: Gas Prices", "FetchIt: HD Video Downloader"). NEVER use generic filler like "Smart Daily Tool", "Fast & Handy Tool", "Smart Pocket Tool", or "Mobile Utility". Must stay within 30 characters!
 2. "shortDescription": Punchy marketing hook focused on user benefits (max 80 characters!)
 3. "fullDescription": Comprehensive, highly engaging description (about 1200-2500 characters). Use eye-catching Unicode emojis (🚀, ✨, 🔥, etc.), distinct bullet point formatting for core features, and weave in the ASO keywords naturally to maximize search rankings.
 CRITICAL GOOGLE PLAY POLICY COMPLIANCE AUDIT: Automatically analyze the app's core feature set to determine if it utilizes any regulated or sensitive Android APIs/permissions (such as AccessibilityService API for screen addiction/app blocking, Background Location for live transit mapping, or System Alert Windows for floating overlays/widgets). If ANY sensitive service or permission is applicable, you MUST dynamically generate a dedicated, legally robust disclosure section inside fullDescription titled "🔒 [NAME OF SERVICE/PERMISSION] DISCLOSURE & PRIVACY POLICY". In this section, you must explicitly articulate (1) the technical reason WHY this application needs this API to operate its core features, and (2) provide an unconditional privacy assurance confirming zero collection, storage, or transmission of personal user data, passwords, keystrokes, or communications.
@@ -236,22 +320,24 @@ Return STRICT JSON only:
     const result = await generateContentWithRetry(model, prompt);
     const text = result.response.text().replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(text);
-    // Enforce character limits gracefully
     if (parsed.shortDescription?.length > 80) parsed.shortDescription = parsed.shortDescription.slice(0, 77) + '...';
-    if (!parsed.title || parsed.title.length > 30) parsed.title = craftAsoTitle(parsed.title || app.name, app.category);
-    
+    if (isBadStoreTitle(parsed.title)) {
+      parsed.title = preferredTitle || craftAsoTitle(brandHint, app.category, app);
+    }
+    parsed.title = String(parsed.title).slice(0, 30);
+
     const updatedListing = { ...listing, ...parsed, locale: 'en-US', updatedAt: new Date().toISOString() };
     saveListing(app.id, 'en-US', updatedListing);
     console.log(`[AI Content] Generated en-US listing for ${app.name}: "${parsed.title}"`);
     return parsed;
   } catch (e) {
     console.log(`[AI Hybrid Engine] Using instant store copywriting fallback profile for ${app.name}`);
-    const cleanTitle = craftAsoTitle(app.name, app.category);
+    const cleanTitle = preferredTitle || craftAsoTitle(brandHint, app.category, app);
     const fallback = {
-      title: cleanTitle,
-      shortDescription: `Experience the definitive ${app.category.toLowerCase()} tool engineered for speed & reliability!`.slice(0, 80),
-      fullDescription: `Welcome to ${cleanTitle}! Built from the ground up for lightning-fast performance, zero lag, and ultra-smooth navigation on all Android devices.\n\n🔥 WHY CHOOSE ${cleanTitle.toUpperCase()}? 🔥\n• Modern, responsive UI designed for effortless daily usage\n• Supercharged resource optimization with minimal battery consumption\n• Regular maintenance updates and continuous stability enhancements\n\n🔒 PRIVACY & COMPLIANCE ASSURANCE 🔒\nThis application strictly complies with all Google Play developer policies and privacy regulations. All sensitive Android device features or system permissions accessed by this application are used solely for localized core functionality on your device, with zero unauthorized collection, storage, or external sharing of sensitive personal user data or private communications.\n\nDownload ${cleanTitle} today and upgrade your mobile experience! 🚀✨`,
-      releaseNotes: 'Worldwide high-speed Play Store release!',
+      title: cleanTitle.slice(0, 30),
+      shortDescription: `Experience ${cleanTitle.split(':')[0].trim()} — built for speed & reliability.`.slice(0, 80),
+      fullDescription: `Welcome to ${cleanTitle}!\n\nBuilt for a fast, focused Android experience with a clean UI and regular updates.\n\n🔒 Privacy: sensitive permissions (if any) stay on-device for core features — we don't sell or exfiltrate your personal data.\n\nDownload ${cleanTitle.split(':')[0].trim()} on Google Play.`,
+      releaseNotes: 'Initial Play Store release.',
     };
     saveListing(app.id, 'en-US', { ...listing, ...fallback, locale: 'en-US', updatedAt: new Date().toISOString() });
     return fallback;

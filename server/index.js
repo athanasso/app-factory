@@ -4,7 +4,7 @@ import cors from 'cors';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
-import { getApps, getAppById, updateApp, getStats, loadDb, addApp, getSettings, updateSettings } from './db/store.js';
+import { getApps, getAppById, updateApp, getStats, loadDb, addApp, getSettings, updateSettings, syncPlayTrackStatuses } from './db/store.js';
 import { initWebSocket, broadcast } from './services/websocket.js';
 import { startPipelineJob, isJobRunning } from './services/queue.js';
 import { getTesterStatus, enrollTesters, promoteToProduction } from './services/testerAutomation.js';
@@ -35,6 +35,16 @@ app.get('/api/apps', (req, res) => {
   const apps = getApps();
   const stats = getStats();
   res.json({ apps, stats });
+});
+
+// Refresh Play production/alpha track detection
+app.post('/api/apps/sync-tracks', async (req, res) => {
+  try {
+    const results = await syncPlayTrackStatuses(req.body?.appId || null);
+    res.json({ success: true, results });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Track sync failed' });
+  }
 });
 
 // Create a new application in the factory
