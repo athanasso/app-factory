@@ -226,16 +226,44 @@ export const inspectKeystores = async (app) => {
   }
 };
 
-// 3. Build or Verify Android App Bundle (AAB)
-export const buildOrVerifyAAB = async (app, { forceCompile = false, onProgress } = {}) => {
+const readExistingAab = (bundleDir) => {
+  if (!fs.existsSync(bundleDir)) return null;
+  const files = fs.readdirSync(bundleDir).filter((f) => f.endsWith('.aab'));
+  if (!files.length) return null;
+  const bestAab = files[0];
+  const aabPath = path.join(bundleDir, bestAab);
+  const stats = fs.statSync(aabPath);
+  const sizeMb = (stats.size / (1024 * 1024)).toFixed(1);
+  return {
+    status: 'VERIFIED_EXISTING',
+    bundleName: bestAab,
+    bundlePath: aabPath,
+    sizeBytes: stats.size,
+    sizeMb: `${sizeMb} MB`,
+    lastModified: stats.mtime.toISOString(),
+    summary: `Ready for Play Store: ${bestAab} (${sizeMb} MB) · Signed & verified`,
+  };
+};
+
+// Clear staged version marker so update pipelines can bump again
+export const clearStagedVersion = (appId) => {
+  const stagedPath = path.join(getBuildDir(appId), 'version_staged.json');
+  if (fs.existsSync(stagedPath)) {
+    try {
+      fs.unlinkSync(stagedPath);
+    } catch {}
+  }
+};
+
+// 3. Build or Verify Android App Bundle (AAB) via `cd android && gradlew bundleRelease`
+export const buildOrVerifyAAB = async (app, { forceCompile = true, onProgress } = {}) => {
   console.log(`[Build Engine] Checking Android App Bundle for ${app.name}...`);
   if (!app.sourcePath || !fs.existsSync(app.sourcePath)) {
-    // Synthetic app mock completion
     const simulatedAab = {
       status: 'SYNTHETIC_BUILD',
       bundlePath: 'cloud:/builds/release-bundle.aab',
       sizeMb: '38.4 MB',
-      summary: 'Compiled synthetic release AAB bundle via virtual build agent'
+      summary: 'Compiled synthetic release AAB bundle via virtual build agent',
     };
     const meta = getBuildMetadata(app.id) || {};
     meta.aab = simulatedAab;
@@ -243,61 +271,42 @@ export const buildOrVerifyAAB = async (app, { forceCompile = false, onProgress }
     return simulatedAab;
   }
 
-  const bundleDir = path.join(app.sourcePath, 'android', 'app', 'build', 'outputs', 'bundle', 'release');
-  
-  // Check if real compiled AAB already exists on disk
-  if (!forceCompile && fs.existsSync(bundleDir)) {
-    const files = fs.readdirSync(bundleDir).filter(f => f.endsWith('.aab'));
-    if (files.length > 0) {
-      const bestAab = files[0];
-      const aabPath = path.join(bundleDir, bestAab);
-      const stats = fs.statSync(aabPath);
-      const sizeMb = (stats.size / (1024 * 1024)).toFixed(1);
-      const modDate = stats.mtime.toLocaleDateString();
-
-      const existingAab = {
-        status: 'VERIFIED_EXISTING',
-        bundleName: bestAab,
-        bundlePath: aabPath,
-        sizeBytes: stats.size,
-        sizeMb: `${sizeMb} MB`,
-        lastModified: stats.mtime.toISOString(),
-        summary: `Ready for Play Store: ${bestAab} (${sizeMb} MB) · Signed & verified`
-      };
-
-      console.log(`[Build Engine] ✔ Found verified existing release AAB for ${app.name}: ${aabPath} (${sizeMb} MB)`);
-      const meta = getBuildMetadata(app.id) || {};
-      meta.aab = existingAab;
-      saveBuildMetadata(app.id, meta);
-
-      if (onProgress) onProgress(100, `Found verified AAB (${sizeMb} MB)`);
-      return existingAab;
-    }
-  }
-
-  // If AAB doesn't exist yet, we attempt to compile or report readiness
-  console.log(`[Build Engine] No pre-compiled AAB in ${bundleDir}. Preparing build task...`);
   const androidDir = path.join(app.sourcePath, 'android');
+  const bundleDir = path.join(androidDir, 'app', 'build', 'outputs', 'bundle', 'release');
+
   if (!fs.existsSync(androidDir)) {
     return {
       status: 'MISSING_ANDROID',
-      summary: 'No native /android folder found. Needs prebuild/expo build.'
+      summary: 'No native /android folder found. Needs prebuild/expo build.',
     };
   }
 
+  // Reuse existing AAB only when explicitly allowed (dashboard verify mode)
   if (!forceCompile) {
-    // Return ready-to-compile state so dashboard remains fast and responsive
+    const existingAab = readExistingAab(bundleDir);
+    if (existingAab) {
+      console.log(`[Build Engine] ✔ Found verified existing release AAB for ${app.name}: ${existingAab.bundlePath}`);
+      const meta = getBuildMetadata(app.id) || {};
+      meta.aab = existingAab;
+      saveBuildMetadata(app.id, meta);
+      if (onProgress) onProgress(100, `Found verified AAB (${existingAab.sizeMb})`);
+      return existingAab;
+    }
     return {
       status: 'READY_TO_COMPILE',
-      summary: 'Gradle environment & keystore verified · Ready to run ./gradlew bundleRelease'
+      summary: 'Gradle environment & keystore verified · Ready to run ./gradlew bundleRelease',
     };
   }
 
-  // Live compilation via child_process
-  return new Promise((resolve, reject) => {
-    console.log(`[Build Engine] Spawning Gradle build in ${androidDir}...`);
+  // Live compilation: cd android && gradlew bundleRelease, then take the .aab
+  return new Promise((resolve) => {
+    console.log(`[Build Engine] Spawning Gradle bundleRelease in ${androidDir}...`);
     const gradlewCmd = process.platform === 'win32' ? 'gradlew.bat' : './gradlew';
-    const buildProcess = spawn(gradlewCmd, ['bundleRelease'], { cwd: androidDir, shell: true });
+    const buildProcess = spawn(gradlewCmd, ['bundleRelease'], {
+      cwd: androidDir,
+      shell: true,
+      env: { ...process.env },
+    });
 
     let latestTask = 'Starting Gradle worker...';
     if (onProgress) onProgress(10, latestTask);
@@ -312,35 +321,31 @@ export const buildOrVerifyAAB = async (app, { forceCompile = false, onProgress }
       }
     });
 
-    buildProcess.stderr.on('data', (data) => {
+    buildProcess.stderr.on('data', () => {
       // Gradle prints normal status updates on stderr too
     });
 
     buildProcess.on('close', (code) => {
       if (code === 0) {
-        // Build succeeded, re-verify AAB file
-        if (fs.existsSync(bundleDir)) {
-          const files = fs.readdirSync(bundleDir).filter(f => f.endsWith('.aab'));
-          if (files.length > 0) {
-            const aabPath = path.join(bundleDir, files[0]);
-            const stats = fs.statSync(aabPath);
-            const res = {
-              status: 'COMPILED',
-              bundlePath: aabPath,
-              sizeMb: `${(stats.size / (1024 * 1024)).toFixed(1)} MB`,
-              summary: `✔ Newly built ${files[0]} (${(stats.size / (1024 * 1024)).toFixed(1)} MB)`
-            };
-            const meta = getBuildMetadata(app.id) || {};
-            meta.aab = res;
-            saveBuildMetadata(app.id, meta);
-            resolve(res);
-            return;
-          }
+        const built = readExistingAab(bundleDir);
+        if (built) {
+          const res = {
+            ...built,
+            status: 'COMPILED',
+            summary: `✔ Built via gradlew bundleRelease: ${built.bundleName} (${built.sizeMb})`,
+          };
+          const meta = getBuildMetadata(app.id) || {};
+          meta.aab = res;
+          saveBuildMetadata(app.id, meta);
+          console.log(`[Build Engine] ✔ AAB ready at ${res.bundlePath}`);
+          if (onProgress) onProgress(100, res.summary);
+          resolve(res);
+          return;
         }
-        resolve({ status: 'COMPILED_NO_FILE', summary: 'Gradle reported success' });
-      } else {
-        resolve({ status: 'FAILED', summary: `Gradle build failed with code ${code}` });
+        resolve({ status: 'COMPILED_NO_FILE', summary: 'Gradle reported success but no .aab was found' });
+        return;
       }
+      resolve({ status: 'FAILED', summary: `Gradle bundleRelease failed with code ${code}` });
     });
   });
 };

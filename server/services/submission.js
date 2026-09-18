@@ -1,7 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 import { getBuildMetadata } from './build.js';
-import { syncStoreListingsViaAPI, uploadBundleViaAPI } from './playConsole.js';
+import {
+  syncStoreListingsViaAPI,
+  uploadBundleViaAPI,
+  uploadListingImagesViaAPI,
+} from './playConsole.js';
 
 // Ensure storage path for submission metadata
 export const getSubmissionDir = (appId) => {
@@ -29,9 +33,9 @@ const getPlayCredentials = () => {
         verified: true,
         email: creds.client_email || 'engine@play-store.iam.gserviceaccount.com',
         projectId: creds.project_id || 'play-store-automation',
-        path: saPath
+        path: saPath,
       };
-    } catch (e) {
+    } catch {
       // JSON parse fallback
     }
   }
@@ -39,77 +43,94 @@ const getPlayCredentials = () => {
     verified: false,
     email: 'cloud-agent@android-publisher.iam.gserviceaccount.com',
     projectId: 'play-store-cloud',
-    summary: 'Using cloud publishing sandbox'
+    summary: 'Using cloud publishing sandbox',
   };
 };
 
-// 1. Upload to Play Console & Execute Live API Mutations (Google Play Developer API v3)
-export const preparePlayConsoleUpload = async (app) => {
+function resolveAabPath(app) {
+  const buildMeta = getBuildMetadata(app.id) || {};
+  if (buildMeta.aab?.bundlePath && fs.existsSync(buildMeta.aab.bundlePath)) {
+    return buildMeta.aab;
+  }
+  if (!app.sourcePath) return buildMeta.aab || null;
+  const bundleDir = path.join(app.sourcePath, 'android', 'app', 'build', 'outputs', 'bundle', 'release');
+  if (!fs.existsSync(bundleDir)) return buildMeta.aab || null;
+  const files = fs.readdirSync(bundleDir).filter((f) => f.endsWith('.aab'));
+  if (!files.length) return buildMeta.aab || null;
+  const aabPath = path.join(bundleDir, files[0]);
+  const stats = fs.statSync(aabPath);
+  return {
+    status: 'DISCOVERED',
+    bundleName: files[0],
+    bundlePath: aabPath,
+    sizeMb: `${(stats.size / (1024 * 1024)).toFixed(1)} MB`,
+  };
+}
+
+// 1. Upload AAB (+ first-time listing images) to Play Console via API v3
+export const preparePlayConsoleUpload = async (app, { isFirstUpload = false, uploadImages = false } = {}) => {
   console.log(`[Submission Engine] Connecting to Google Play Developer API v3 for: ${app.name}`);
-  
-  // Execute Live API Store Mutation via Google Play Developer API v3 to guarantee latest copy renders on Play Console
+
   const apiMutationRes = await syncStoreListingsViaAPI(app.packageName, app.id);
-  const mutationStatus = apiMutationRes.success 
-    ? (apiMutationRes.committedLocales && apiMutationRes.committedLocales.length > 0
-        ? `✔ Live API v3 Committed (${apiMutationRes.committedLocales.length} Locales Synced to Google Play Console)`
-        : `⚠️ Play API v3 Connected (0 locales sent - generate translations first!)`)
+  const mutationStatus = apiMutationRes.success
+    ? apiMutationRes.committedLocales && apiMutationRes.committedLocales.length > 0
+      ? `✔ Live API v3 Committed (${apiMutationRes.committedLocales.length} Locales Synced to Google Play Console)`
+      : `⚠️ Play API v3 Connected (0 locales sent - generate translations first!)`
     : `⚠️ Play API Mutation Error: ${apiMutationRes.error || 'Failed to stage edits'}`;
 
-  const existingFilePath = path.join(getSubmissionDir(app.id), 'play_console_upload.json');
-  if (fs.existsSync(existingFilePath)) {
-    try {
-      const existingData = JSON.parse(fs.readFileSync(existingFilePath, 'utf8'));
-      console.log(`[Submission Engine] ✔ Found existing Play Console upload record for ${app.name} -> Store copy synced; retaining existing AAB binary upload`);
-      existingData.apiMutationResult = apiMutationRes;
-      existingData.timestamp = new Date().toISOString();
-      existingData.summary = `${mutationStatus} · AAB active on Play Console`;
-      fs.writeFileSync(existingFilePath, JSON.stringify(existingData, null, 2));
-      return existingData;
-    } catch (e) {}
-  }
-
   const creds = getPlayCredentials();
-  const buildMeta = getBuildMetadata(app.id) || {};
-  const bundleInfo = buildMeta.aab || {
-    status: 'VERIFIED_EXISTING',
+  const bundleInfo = resolveAabPath(app) || {
+    status: 'MISSING',
     bundleName: 'app-release.aab',
-    sizeMb: '36.8 MB',
-    summary: 'Pre-verified production build bundle'
+    sizeMb: '0 MB',
+    summary: 'No AAB found — run gradlew bundleRelease first',
   };
 
-  // Determine release track based on whether app is real / published
-  const track = (app.isReal && app.status === 'Published') ? 'production' : 'internal';
-  const releaseStatus = (app.isReal && app.status === 'Published') ? 'COMPLETED' : 'DRAFT';
+  const track = app.isReal && app.status === 'Published' ? 'production' : 'internal';
+  const releaseStatus = app.isReal && app.status === 'Published' ? 'COMPLETED' : 'DRAFT';
 
-  // Perform physical AAB Binary Upload to Google Play Developer Console via API v3 if file exists
   let bundleApiResult = null;
   if (bundleInfo.bundlePath && fs.existsSync(bundleInfo.bundlePath)) {
+    console.log(`[Submission Engine] Uploading AAB ${bundleInfo.bundlePath} to track '${track}'...`);
     bundleApiResult = await uploadBundleViaAPI(app.packageName, bundleInfo.bundlePath, track);
+  } else {
+    bundleApiResult = {
+      success: false,
+      error: 'No live .aab binary on disk — expected android/app/build/outputs/bundle/release/*.aab',
+    };
+  }
+
+  let imagesApiResult = null;
+  if (isFirstUpload || uploadImages) {
+    imagesApiResult = await uploadListingImagesViaAPI(app.packageName, app.id, 'en-US');
   }
 
   const consoleData = {
     packageName: app.packageName,
-    versionCode: bundleApiResult?.versionCode || 105,
+    versionCode: bundleApiResult?.versionCode || null,
     versionName: app.version || '1.0.0',
-    track: track,
-    releaseStatus: releaseStatus,
+    track,
+    releaseStatus,
     apiServiceAccount: creds.email,
     projectId: creds.projectId,
     apiMutationResult: apiMutationRes,
     bundleApiResult: bundleApiResult || { status: 'STAGED_FOR_UPLOAD', note: 'No live .aab binary on disk to push to API' },
+    imagesApiResult,
+    isFirstUpload: Boolean(isFirstUpload),
     uploadedArtifacts: [
       {
         type: 'ANDROID_APP_BUNDLE',
         filename: bundleInfo.bundleName || 'app-release.aab',
-        size: bundleInfo.sizeMb || '38.2 MB',
-        versionCode: bundleApiResult?.versionCode || 105,
-        mappingFile: 'mapping.txt (R8 / ProGuard symbols uploaded)'
-      }
+        size: bundleInfo.sizeMb || 'unknown',
+        versionCode: bundleApiResult?.versionCode || null,
+        path: bundleInfo.bundlePath || null,
+        mappingFile: 'mapping.txt (R8 / ProGuard symbols uploaded)',
+      },
     ],
     timestamp: new Date().toISOString(),
-    summary: bundleApiResult?.success 
-      ? `${bundleApiResult.summary} · ${mutationStatus}`
-      : `${mutationStatus} · Track: ${track.toUpperCase()} · Release: ${releaseStatus}`
+    summary: bundleApiResult?.success
+      ? `${bundleApiResult.summary}${imagesApiResult?.success ? ` · ${imagesApiResult.summary}` : ''} · ${mutationStatus}`
+      : `${mutationStatus} · AAB upload: ${bundleApiResult?.error || 'failed'} · Track: ${track.toUpperCase()}`,
   };
 
   saveSubmissionData(app.id, 'play_console_upload.json', consoleData);
@@ -121,25 +142,34 @@ export const submitForReview = async (app) => {
   console.log(`[Submission Engine] Running pre-submission compliance audit & Play Store submission for: ${app.name}`);
 
   const reviewPath = path.join(getSubmissionDir(app.id), 'review_submission.json');
-  if (fs.existsSync(reviewPath)) {
+  if (fs.existsSync(reviewPath) && app.status === 'Published') {
     try {
       const savedReview = JSON.parse(fs.readFileSync(reviewPath, 'utf8'));
-      console.log(`[Submission Engine] ✔ Found existing Play review record for ${app.name} -> Retaining from initial submission`);
-      savedReview.summary = savedReview.reviewState === 'APPROVED_AND_LIVE'
-        ? `✔ Live on Google Play · 100% Production Rollout Active (Retained from initial submission)`
-        : `✔ Submitted to Google Play Review · Staged Rollout Active (Retained from initial submission)`;
+      console.log(`[Submission Engine] ✔ Found existing Play review record for ${app.name}`);
+      savedReview.summary =
+        savedReview.reviewState === 'APPROVED_AND_LIVE'
+          ? `✔ Live on Google Play · 100% Production Rollout Active (Retained from initial submission)`
+          : `✔ Submitted to Google Play Review · Staged Rollout Active (Retained from initial submission)`;
       return savedReview;
-    } catch (e) {}
+    } catch {
+      // recreate
+    }
   }
 
-  // Perform Play Store Policy & Technical Checks
   const complianceAudit = {
     targetSdk: { status: 'PASSED', level: 35, detail: 'Android 15 (API level 35) compliant' },
-    dataSafety: { status: 'PASSED', declaration: 'No unencrypted user data collected or shared without explicit user consent' },
+    dataSafety: {
+      status: 'PASSED',
+      declaration: 'No unencrypted user data collected or shared without explicit user consent',
+    },
     advertisingId: { status: 'PASSED', usesAdId: true, declaration: 'AdMob Analytics & Advertising compliance verified' },
-    permissions: { status: 'PASSED', restrictedPermissions: [], detail: 'Minimal permission footprint audited (No sensitive SMS/Call log access)' },
+    permissions: {
+      status: 'PASSED',
+      restrictedPermissions: [],
+      detail: 'Minimal permission footprint audited (No sensitive SMS/Call log access)',
+    },
     billingLibrary: { status: 'PASSED', version: 'Google Play Billing Library v7.0.0' },
-    iarcRating: { status: 'PASSED', rating: 'PEGI 3 / Everyone' }
+    iarcRating: { status: 'PASSED', rating: 'PEGI 3 / Everyone' },
   };
 
   const isPublished = app.isReal && app.status === 'Published';
@@ -153,7 +183,7 @@ export const submitForReview = async (app) => {
     complianceAudit,
     summary: isPublished
       ? `✔ Live on Google Play · 100% Production Rollout Active · Policy audit 100% passed`
-      : `✔ Submitted to Google Play Review · Staged Rollout Prepared (20%) · Policy audit passed`
+      : `✔ Submitted to Google Play Review · Staged Rollout Prepared (20%) · Policy audit passed`,
   };
 
   saveSubmissionData(app.id, 'review_submission.json', reviewOutcome);

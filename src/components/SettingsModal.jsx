@@ -7,6 +7,7 @@ export default function SettingsModal({ onClose, getEngineSettings, updateEngine
     projectsRoot: '',
     aiProvider: 'Gemini Pro 1.5',
     autoGenerateScreenshots: true,
+    autoPublishPending: true,
     autoTranslateLocales: 49,
     autoSubmitInReview: false,
     telemetryPollingMinutes: 30
@@ -186,7 +187,18 @@ export default function SettingsModal({ onClose, getEngineSettings, updateEngine
                       checked={settings.autoGenerateScreenshots}
                       onChange={(e) => handleChange('autoGenerateScreenshots', e.target.checked)}
                     />
-                    <span>Automatically generate tablet & phone promotional screenshots via AI vision models</span>
+                    <span>Automatically generate tablet & phone promotional screenshots via Expo web mobile viewport</span>
+                  </label>
+                </div>
+
+                <div className="form-group checkbox-group">
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={settings.autoPublishPending !== false}
+                      onChange={(e) => handleChange('autoPublishPending', e.target.checked)}
+                    />
+                    <span>Auto upload/update apps missing a Play Console AAB (gradlew bundleRelease + upload)</span>
                   </label>
                 </div>
 

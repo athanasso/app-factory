@@ -310,72 +310,188 @@ function extractDisplayName(appPath, appName) {
   return displayName.slice(0, 30);
 }
 
-// Scan user's real React Native folder to import published apps!
+const SCAN_SKIP_DIRS = new Set([
+  'node_modules',
+  '.git',
+  '.expo',
+  'android',
+  'ios',
+  'build',
+  '.gradle',
+  'dist',
+  'coverage',
+  '.vscode',
+  '.idea',
+  'hooks',
+  'components',
+  'assets',
+  'app',
+  'src',
+  'scripts',
+  'plugins',
+  'constants',
+  'contexts',
+  'modules',
+  'lib',
+  'services',
+  'types',
+  '__tests__',
+  'test',
+  'tests',
+  'docs',
+]);
+
+function isReactNativeProject(dir) {
+  const pkgPath = path.join(dir, 'package.json');
+  if (!fs.existsSync(pkgPath)) return false;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+    if (deps['react-native'] || deps.expo) return true;
+  } catch {
+    // fall through to structural checks
+  }
+  return (
+    fs.existsSync(path.join(dir, 'app.json')) ||
+    fs.existsSync(path.join(dir, 'app.config.js')) ||
+    fs.existsSync(path.join(dir, 'app.config.ts')) ||
+    fs.existsSync(path.join(dir, 'android', 'app'))
+  );
+}
+
+function discoverRnProjectDirs(root, { maxDepth = 5 } = {}) {
+  const found = [];
+
+  const walk = (dir, depth) => {
+    if (depth > maxDepth) return;
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const name = entry.name;
+      if (SCAN_SKIP_DIRS.has(name) || name.startsWith('.')) continue;
+      if (name.toLowerCase().includes('-auth')) continue;
+
+      const full = path.join(dir, name);
+      if (isReactNativeProject(full)) {
+        found.push(full);
+        // Still scan one level deeper in case a monorepo nests another app,
+        // but skip common RN internals already covered by SCAN_SKIP_DIRS.
+        continue;
+      }
+      walk(full, depth + 1);
+    }
+  };
+
+  // Also accept PROJECTS_ROOT itself if it is a single RN app
+  if (isReactNativeProject(root)) {
+    found.push(root);
+  }
+  walk(root, 0);
+
+  // Prefer deeper paths when both a parent wrapper and nested app somehow match
+  found.sort((a, b) => b.split(path.sep).length - a.split(path.sep).length || a.localeCompare(b));
+  const deduped = [];
+  const seenPackages = new Set();
+  const coveredByChild = new Set();
+
+  for (const appPath of found) {
+    // Skip parents of an already-accepted deeper project
+    if ([...coveredByChild].some((child) => child.startsWith(appPath + path.sep))) continue;
+
+    const folderName = path.basename(appPath);
+    const packageName = extractRealPackage(appPath, folderName);
+    const key = (packageName || folderName).toLowerCase();
+    if (seenPackages.has(key)) continue;
+    seenPackages.add(key);
+    coveredByChild.add(appPath);
+    deduped.push(appPath);
+  }
+
+  return deduped.sort((a, b) => a.localeCompare(b));
+}
+
+function slugifyAppId(appPath, root) {
+  const rel = path.relative(root, appPath).replace(/\\/g, '/');
+  const base = (rel && rel !== '.' ? rel : path.basename(appPath))
+    .split('/')
+    .filter(Boolean)
+    .pop();
+  return `real-${String(base || 'app').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+}
+
+// Scan user's real React Native folder (including nested project roots)
 const scanRealApps = () => {
   const scannedApps = [];
-  if (fs.existsSync(PROJECTS_ROOT)) {
-    const entries = fs.readdirSync(PROJECTS_ROOT, { withFileTypes: true });
-    entries.forEach((entry) => {
-      // Exclude sub-projects or helper prototypes (e.g. auth projects like media-tracker-auth or photos-widget-auth)
-      if (entry.isDirectory() && !entry.name.toLowerCase().includes('-auth')) {
-        const appName = entry.name;
-        const appPath = path.join(PROJECTS_ROOT, appName);
-        
-        let version = '1.0.0';
-        const packageName = extractRealPackage(appPath, appName);
-        
-        try {
-          const pkgPath = path.join(appPath, 'package.json');
-          const appJsonPath = path.join(appPath, 'app.json');
-          if (fs.existsSync(appJsonPath)) {
-            const appData = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'));
-            if (appData?.expo?.version) version = appData.expo.version;
-          } else if (fs.existsSync(pkgPath)) {
-            const pkgData = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-            if (pkgData.version) version = pkgData.version;
-          }
-        } catch (e) {}
+  if (!fs.existsSync(PROJECTS_ROOT)) return scannedApps;
 
-        // Check if real app icon PNG exists on disk
-        let iconUrl = null;
-        const potentialIcons = [
-          path.join(appPath, 'assets', 'images', 'icon.png'),
-          path.join(appPath, 'assets', 'icon.png'),
-          path.join(appPath, 'assets', 'images', 'app-icon.png'),
-          path.join(appPath, 'assets', 'images', 'adaptive-icon.png'),
-          path.join(appPath, 'android', 'app', 'src', 'main', 'res', 'mipmap-xxxhdpi', 'ic_launcher.png')
-        ];
-        for (const icPath of potentialIcons) {
-          if (fs.existsSync(icPath)) {
-            iconUrl = `http://localhost:3001/api/apps/real-${appName.toLowerCase()}/icon`;
-            break;
-          }
-        }
+  const projectDirs = discoverRnProjectDirs(PROJECTS_ROOT, { maxDepth: 5 });
+  console.log(`[Scanner] Found ${projectDirs.length} React Native app(s) under ${PROJECTS_ROOT}`);
 
-        const displayName = extractDisplayName(appPath, appName);
-        const category = getCategory(appPath, appName, displayName, packageName);
-        const icon = getAppIcon(appPath, appName, displayName, category);
+  for (const appPath of projectDirs) {
+    const appName = path.basename(appPath);
+    const appId = slugifyAppId(appPath, PROJECTS_ROOT);
 
-        scannedApps.push({
-          id: `real-${appName.toLowerCase()}`,
-          name: displayName,
-          packageName,
-          icon,
-          iconUrl,
-          status: AppStatus.PUBLISHED,
-          version,
-          revenue: 0,
-          downloads: 0,
-          rating: 0,
-          pipeline: allCompleted(createPipelineTemplate()),
-          lastUpdated: '2026-07-28',
-          category,
-          sourcePath: appPath,
-          isReal: true,
-        });
+    let version = '1.0.0';
+    const packageName = extractRealPackage(appPath, appName);
+
+    try {
+      const pkgPath = path.join(appPath, 'package.json');
+      const appJsonPath = path.join(appPath, 'app.json');
+      if (fs.existsSync(appJsonPath)) {
+        const appData = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'));
+        if (appData?.expo?.version) version = appData.expo.version;
+      } else if (fs.existsSync(pkgPath)) {
+        const pkgData = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+        if (pkgData.version) version = pkgData.version;
       }
+    } catch {
+      // keep default version
+    }
+
+    let iconUrl = null;
+    const potentialIcons = [
+      path.join(appPath, 'assets', 'images', 'icon.png'),
+      path.join(appPath, 'assets', 'icon.png'),
+      path.join(appPath, 'assets', 'images', 'app-icon.png'),
+      path.join(appPath, 'assets', 'images', 'adaptive-icon.png'),
+      path.join(appPath, 'android', 'app', 'src', 'main', 'res', 'mipmap-xxxhdpi', 'ic_launcher.png'),
+    ];
+    for (const icPath of potentialIcons) {
+      if (fs.existsSync(icPath)) {
+        iconUrl = `http://localhost:3001/api/apps/${appId}/icon`;
+        break;
+      }
+    }
+
+    const displayName = extractDisplayName(appPath, appName);
+    const category = getCategory(appPath, appName, displayName, packageName);
+    const icon = getAppIcon(appPath, appName, displayName, category);
+
+    scannedApps.push({
+      id: appId,
+      name: displayName,
+      packageName,
+      icon,
+      iconUrl,
+      status: AppStatus.PUBLISHED,
+      version,
+      revenue: 0,
+      downloads: 0,
+      rating: 0,
+      pipeline: allCompleted(createPipelineTemplate()),
+      lastUpdated: '2026-07-28',
+      category,
+      sourcePath: appPath,
+      isReal: true,
     });
   }
+
   return scannedApps;
 };
 
@@ -398,6 +514,7 @@ let db = {
     projectsRoot: process.env.PROJECTS_ROOT || 'D:/Projects/RN/published',
     aiProvider: 'Gemini Pro 1.5',
     autoGenerateScreenshots: true,
+    autoPublishPending: true,
     autoTranslateLocales: 49,
     autoSubmitInReview: false,
     telemetryPollingMinutes: 30

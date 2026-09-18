@@ -193,6 +193,93 @@ export async function promoteReleaseTrackViaAPI(packageName, toTrack = 'producti
   }
 }
 
+// Upload feature graphic + phone screenshots for a store listing language
+export async function uploadListingImagesViaAPI(packageName, appId, language = 'en-US') {
+  const publisher = getPublisher();
+  if (!publisher || !packageName) {
+    return { success: false, error: 'Publisher credentials not configured or missing package name' };
+  }
+
+  const mediaDir = path.resolve(process.cwd(), 'data', 'apps_content', appId, 'media');
+  const shotsDir = path.join(mediaDir, 'screenshots');
+  const featureGraphic = path.join(mediaDir, 'feature_graphic_1024x500.png');
+  const iconPath = path.join(mediaDir, 'icon_512.png');
+
+  const uploads = [];
+  try {
+    const editRes = await publisher.edits.insert({ packageName });
+    const editId = editRes.data.id;
+
+    const uploadImage = async (imageType, filePath) => {
+      if (!fs.existsSync(filePath)) return null;
+      await publisher.edits.images.upload({
+        packageName,
+        editId,
+        language,
+        imageType,
+        media: {
+          mimeType: 'image/png',
+          body: fs.createReadStream(filePath),
+        },
+      });
+      uploads.push({ imageType, file: path.basename(filePath) });
+      console.log(`[Play API Mutation] ✔ Uploaded ${imageType}: ${path.basename(filePath)}`);
+      return true;
+    };
+
+    if (fs.existsSync(featureGraphic)) {
+      try {
+        await publisher.edits.images.deleteall({ packageName, editId, language, imageType: 'featureGraphic' });
+      } catch {}
+      await uploadImage('featureGraphic', featureGraphic);
+    }
+
+    if (fs.existsSync(iconPath)) {
+      try {
+        await publisher.edits.images.deleteall({ packageName, editId, language, imageType: 'icon' });
+      } catch {}
+      await uploadImage('icon', iconPath);
+    }
+
+    if (fs.existsSync(shotsDir)) {
+      const phonePngs = fs
+        .readdirSync(shotsDir)
+        .filter((f) => f.startsWith('phone_') && f.endsWith('.png'))
+        .sort()
+        .slice(0, 8);
+      if (phonePngs.length) {
+        try {
+          await publisher.edits.images.deleteall({
+            packageName,
+            editId,
+            language,
+            imageType: 'phoneScreenshots',
+          });
+        } catch {}
+        for (const file of phonePngs) {
+          await uploadImage('phoneScreenshots', path.join(shotsDir, file));
+        }
+      }
+    }
+
+    if (uploads.length === 0) {
+      await publisher.edits.delete({ packageName, editId }).catch(() => {});
+      return { success: false, error: 'No listing images found on disk to upload' };
+    }
+
+    await commitEdit(publisher, packageName, editId);
+    return {
+      success: true,
+      editId,
+      uploads,
+      summary: `✔ Uploaded ${uploads.length} listing image(s) to Play Console (${language})`,
+    };
+  } catch (err) {
+    console.warn(`[Play API Mutation] Listing image upload failed: ${err.message}`);
+    return { success: false, error: err.message, uploads };
+  }
+}
+
 // Upload physical pre-compiled .aab binary directly to Google Play Console release track via API v3
 export async function uploadBundleViaAPI(packageName, aabFilePath, track = 'internal') {
   const publisher = getPublisher();

@@ -9,6 +9,7 @@ import { initWebSocket, broadcast } from './services/websocket.js';
 import { startPipelineJob, isJobRunning } from './services/queue.js';
 import { getTesterStatus, enrollTesters, promoteToProduction } from './services/testerAutomation.js';
 import { getLiveMonetizationMetrics } from './services/monetization.js';
+import { startAutoPublishScheduler, getPublishNeeds, drainPendingPublishes } from './services/autoPublish.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -71,17 +72,42 @@ app.put('/api/apps/:id', (req, res) => {
 // Run pipeline for an app
 app.post('/api/apps/:id/pipeline/run', async (req, res) => {
   const { id } = req.params;
-  const { fromScratch = true } = req.body || {};
+  const { fromScratch = true, mode, forceCompile = true } = req.body || {};
 
   try {
     if (isJobRunning(id)) {
       return res.status(400).json({ error: 'Pipeline is currently executing for this app.' });
     }
-    
-    await startPipelineJob(id, { fromScratch });
-    res.json({ success: true, message: `Pipeline execution triggered for app ${id}` });
+
+    const appItem = getAppById(id);
+    const needs = appItem ? getPublishNeeds(appItem) : { action: 'full' };
+    const resolvedMode = mode || (fromScratch ? 'first_upload' : needs.action === 'none' ? 'full' : needs.action);
+
+    await startPipelineJob(id, { fromScratch, mode: resolvedMode, forceCompile });
+    res.json({ success: true, message: `Pipeline execution triggered for app ${id}`, mode: resolvedMode });
   } catch (error) {
     res.status(500).json({ error: error.message || 'Failed to trigger pipeline' });
+  }
+});
+
+// Inspect which apps still need first upload or AAB update
+app.get('/api/publish/needs', (req, res) => {
+  const apps = getApps().map((a) => ({
+    id: a.id,
+    name: a.name,
+    status: a.status,
+    ...getPublishNeeds(a),
+  }));
+  res.json({ apps, pending: apps.filter((a) => a.action !== 'none') });
+});
+
+// Manually kick the auto-publish drain (upload/update missing apps)
+app.post('/api/publish/auto', async (req, res) => {
+  try {
+    await drainPendingPublishes();
+    res.json({ success: true, message: 'Auto-publish drain triggered' });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Auto-publish failed' });
   }
 });
 
@@ -220,4 +246,5 @@ server.listen(PORT, () => {
   console.log(`  🔌 Real-time WebSocket endpoint: ws://localhost:${PORT}/ws`);
   console.log(`  📂 Scanning published apps root: ${process.env.PROJECTS_ROOT || 'D:/Projects/RN/published'}`);
   console.log(`======================================================\n`);
+  startAutoPublishScheduler();
 });
