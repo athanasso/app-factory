@@ -75,7 +75,7 @@ export const getListing = (appId, locale = 'en-US') => {
 // 1. Generate Keyword Research & Niche ASO
 export const generateKeywordResearch = async (app) => {
   const existing = getListing(app.id);
-  if (existing && existing.seoMetadata) {
+  if (existing?.seoMetadata && !isGenericListingCopy(existing)) {
     console.log(`[AI Content] ✔ Found existing SEO keyword research for ${app.name} -> Retaining from initial research`);
     return existing.seoMetadata;
   }
@@ -122,7 +122,7 @@ Return strictly JSON without markdown code blocks if possible, or inside a simpl
 // 2. Generate Product Specification
 export const generateProductSpec = async (app) => {
   const existing = getListing(app.id);
-  if (existing && existing.productSpec) {
+  if (existing?.productSpec && !isGenericListingCopy(existing)) {
     console.log(`[AI Content] ✔ Found existing Product Spec architecture for ${app.name} -> Retaining from initial architecture analysis`);
     return existing.productSpec;
   }
@@ -176,6 +176,75 @@ Respond in strict JSON format:
 
 const GENERIC_TITLE_JUNK =
   /\b(smart daily tool|fast & handy tool|smart pocket tool|mobile utility|quick productivity|task organizer|utility & tools|smart tool)\b/i;
+
+const GENERIC_LISTING_JUNK =
+  /\b(definitive productivity tool|smart daily tool|fast & handy tool|smart pocket tool|upgrade your mobile experience|master your productivity|daily habit tool|fast performance utility|blazing fast app loading|why choose .{0,40}smart daily)\b/i;
+
+/** True when store copy is generic filler unrelated to the real product. */
+export function isGenericListingCopy(listing = {}) {
+  const blob = [
+    listing.title,
+    listing.shortDescription,
+    listing.fullDescription,
+    listing.featureGraphic?.headline,
+    ...(listing.seoMetadata?.primaryKeywords || []),
+    ...(listing.seoMetadata?.longTailKeywords || []),
+  ]
+    .filter(Boolean)
+    .join('\n');
+  return GENERIC_TITLE_JUNK.test(blob) || GENERIC_LISTING_JUNK.test(blob);
+}
+
+function readAppReadmeSnippet(app, maxChars = 1800) {
+  if (!app?.sourcePath) return '';
+  const candidates = [
+    path.join(app.sourcePath, 'README.md'),
+    path.join(app.sourcePath, 'readme.md'),
+  ];
+  for (const p of candidates) {
+    try {
+      if (!fs.existsSync(p)) continue;
+      return fs.readFileSync(p, 'utf8').slice(0, maxChars);
+    } catch {}
+  }
+  return '';
+}
+
+function nicheFallbackListing(app, cleanTitle) {
+  const blob = `${app.name} ${app.packageName} ${app.description || ''} ${readAppReadmeSnippet(app, 800)}`.toLowerCase();
+  const brand = cleanTitle.split(':')[0].trim();
+
+  if (/fuel|gas|petrol|diesel/.test(blob)) {
+    return {
+      title: cleanTitle.slice(0, 30),
+      shortDescription: 'Live Greek fuel prices on a map — compare stations near you.'.slice(0, 80),
+      fullDescription: `Find the cheapest fuel near you across Greece.
+
+${brand} shows live petrol, diesel, LPG and CNG prices on an interactive map and sorted list — so you can compare stations before you fill up.
+
+WHAT YOU GET
+• Interactive map with color-coded price bubbles and brand pins
+• Switch fuels: Unleaded 95/100, Diesel, Heating Diesel, LPG, CNG
+• Filter by brand (Shell, BP, EKO, AVIN, and more)
+• Radius analytics: lowest, average and highest prices nearby
+• Google ratings & review counts with directions deep-links
+• Price history with 7-day trends and sparklines per station
+• Offline-first startup with automatic price sync
+
+Built for drivers in Greece who want the best pump price without guessing.
+
+Download ${brand} and check prices before your next fill-up.`,
+      releaseNotes: 'First Play Store release — live Greek fuel prices, map & list views.',
+    };
+  }
+
+  return {
+    title: cleanTitle.slice(0, 30),
+    shortDescription: `Experience ${brand} — built for speed & reliability.`.slice(0, 80),
+    fullDescription: `Welcome to ${cleanTitle}!\n\nBuilt for a fast, focused Android experience with a clean UI and regular updates.\n\nDownload ${brand} on Google Play.`,
+    releaseNotes: 'Initial Play Store release.',
+  };
+}
 
 /** Build a Play title from brand + niche words, never generic "Smart Daily Tool"-style junk. */
 export function craftAsoTitle(brandName, category = 'Tools', app = null) {
@@ -272,6 +341,7 @@ export const generateDescription = async (app) => {
     listing.fullDescription &&
     existingTitle &&
     !isBadStoreTitle(existingTitle) &&
+    !isGenericListingCopy(listing) &&
     !existingTitle.toLowerCase().includes('flappy') &&
     !String(listing.fullDescription).toLowerCase().includes('flappy');
 
@@ -292,21 +362,23 @@ export const generateDescription = async (app) => {
   const model = getModel();
   const keywords = listing.seoMetadata?.primaryKeywords?.join(', ') || app.category;
   const brandHint = preferredTitle || app.name;
+  const readme = readAppReadmeSnippet(app);
 
-  const prompt = `You are a master Google Play Store copywriter and senior App Store compliance officer known for viral organic conversion rates and zero policy rejections.
-Write the official Google Play Store store listing text for the Android app:
+  const prompt = `You are a master Google Play Store copywriter known for honest, niche-accurate listings (not generic utility spam).
+Write the official Google Play Store listing for:
 Name: "${brandHint}"
 Category: "${app.category}"
 Package: ${app.packageName || 'n/a'}
 Description hint: ${(app.description || '').slice(0, 300)}
 Target ASO Keywords: ${keywords}
+${readme ? `Product README (source of truth for features):\n${readme}` : ''}
 
-Requirements according to Google Play guidelines:
-1. "title": Combine the REAL brand name with a niche-specific subtitle (e.g. "AstroLogos: Daily Horoscope", "Fuel Greece: Gas Prices", "FetchIt: HD Video Downloader"). NEVER use generic filler like "Smart Daily Tool", "Fast & Handy Tool", "Smart Pocket Tool", or "Mobile Utility". Must stay within 30 characters!
-2. "shortDescription": Punchy marketing hook focused on user benefits (max 80 characters!)
-3. "fullDescription": Comprehensive, highly engaging description (about 1200-2500 characters). Use eye-catching Unicode emojis (🚀, ✨, 🔥, etc.), distinct bullet point formatting for core features, and weave in the ASO keywords naturally to maximize search rankings.
-CRITICAL GOOGLE PLAY POLICY COMPLIANCE AUDIT: Automatically analyze the app's core feature set to determine if it utilizes any regulated or sensitive Android APIs/permissions (such as AccessibilityService API for screen addiction/app blocking, Background Location for live transit mapping, or System Alert Windows for floating overlays/widgets). If ANY sensitive service or permission is applicable, you MUST dynamically generate a dedicated, legally robust disclosure section inside fullDescription titled "🔒 [NAME OF SERVICE/PERMISSION] DISCLOSURE & PRIVACY POLICY". In this section, you must explicitly articulate (1) the technical reason WHY this application needs this API to operate its core features, and (2) provide an unconditional privacy assurance confirming zero collection, storage, or transmission of personal user data, passwords, keystrokes, or communications.
-4. "releaseNotes": Short initial release notes (max 400 characters).
+Requirements:
+1. "title": REAL brand + niche subtitle (e.g. "Fuel Greece: Gas Prices", "AstroLogos: Daily Horoscope"). NEVER "Smart Daily Tool", "Fast & Handy Tool", "productivity tool", or similar filler. Max 30 characters.
+2. "shortDescription": Specific user benefit for THIS app (max 80 characters). No generic "speed & reliability" fluff.
+3. "fullDescription": 1200-2500 chars about the REAL product features from the README/name. Emojis OK. Never invent a generic productivity utility. Never say "Smart Daily Tool".
+4. Only add a sensitive-permission disclosure section if the README/features clearly need Accessibility, background location, or overlay APIs.
+5. "releaseNotes": Short initial notes (max 400 characters).
 
 Return STRICT JSON only:
 {
@@ -321,8 +393,9 @@ Return STRICT JSON only:
     const text = result.response.text().replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(text);
     if (parsed.shortDescription?.length > 80) parsed.shortDescription = parsed.shortDescription.slice(0, 77) + '...';
-    if (isBadStoreTitle(parsed.title)) {
-      parsed.title = preferredTitle || craftAsoTitle(brandHint, app.category, app);
+    if (isBadStoreTitle(parsed.title) || isGenericListingCopy(parsed)) {
+      const cleanTitle = preferredTitle || craftAsoTitle(brandHint, app.category, app);
+      Object.assign(parsed, nicheFallbackListing(app, cleanTitle));
     }
     parsed.title = String(parsed.title).slice(0, 30);
 
@@ -331,14 +404,9 @@ Return STRICT JSON only:
     console.log(`[AI Content] Generated en-US listing for ${app.name}: "${parsed.title}"`);
     return parsed;
   } catch (e) {
-    console.log(`[AI Hybrid Engine] Using instant store copywriting fallback profile for ${app.name}`);
+    console.log(`[AI Hybrid Engine] Using niche store copywriting fallback for ${app.name}`);
     const cleanTitle = preferredTitle || craftAsoTitle(brandHint, app.category, app);
-    const fallback = {
-      title: cleanTitle.slice(0, 30),
-      shortDescription: `Experience ${cleanTitle.split(':')[0].trim()} — built for speed & reliability.`.slice(0, 80),
-      fullDescription: `Welcome to ${cleanTitle}!\n\nBuilt for a fast, focused Android experience with a clean UI and regular updates.\n\n🔒 Privacy: sensitive permissions (if any) stay on-device for core features — we don't sell or exfiltrate your personal data.\n\nDownload ${cleanTitle.split(':')[0].trim()} on Google Play.`,
-      releaseNotes: 'Initial Play Store release.',
-    };
+    const fallback = nicheFallbackListing(app, cleanTitle);
     saveListing(app.id, 'en-US', { ...listing, ...fallback, locale: 'en-US', updatedAt: new Date().toISOString() });
     return fallback;
   }
