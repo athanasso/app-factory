@@ -100,8 +100,10 @@ export const startPipelineJob = async (
     clearStagedVersion(appId);
   }
 
+  const previousStatus = app.status;
   updateApp(appId, {
     status: AppStatus.UPDATING,
+    statusBeforeUpdate: previousStatus,
     pipeline,
     publishMode: resolvedMode,
   });
@@ -110,7 +112,12 @@ export const startPipelineJob = async (
   runPipelineSteps(appId, pipeline, { mode: resolvedMode, forceCompile }).catch((err) => {
     console.error(`Pipeline failed for app ${appId}:`, err);
     activeJobs.delete(appId);
-    updateApp(appId, { status: AppStatus.FAILED });
+    const current = getAppById(appId);
+    const restore =
+      current?.playProduction || current?.playTracks?.production
+        ? AppStatus.PUBLISHED
+        : current?.statusBeforeUpdate || AppStatus.DRAFT;
+    updateApp(appId, { status: restore, statusBeforeUpdate: null, publishMode: null });
     broadcastUpdate(appId);
     kickAutoPublish();
   });
@@ -160,12 +167,18 @@ const runPipelineSteps = async (appId, pipeline, { mode = 'full', forceCompile =
   }
 
   console.log(`[Engine] Pipeline successfully completed for app: ${appId}!`);
+  const done = getAppById(appId);
   const finalStatus =
-    getAppById(appId)?.isReal || getAppById(appId)?.status === AppStatus.PUBLISHED
+    done?.playProduction || done?.playTracks?.production
       ? AppStatus.PUBLISHED
-      : AppStatus.IN_REVIEW;
+      : done?.statusBeforeUpdate && done.statusBeforeUpdate !== AppStatus.UPDATING
+        ? done.statusBeforeUpdate
+        : done?.isReal
+          ? AppStatus.DRAFT
+          : AppStatus.IN_REVIEW;
   updateApp(appId, {
     status: finalStatus,
+    statusBeforeUpdate: null,
     lastUpdated: new Date().toISOString().split('T')[0],
     publishMode: null,
   });
@@ -308,8 +321,10 @@ const executeStepHandler = async (appId, sectionId, step, pipeline, { mode, forc
 
       case 'build_aab': {
         const keyRes = await inspectKeystores(app);
+        // Reuse on-disk AAB when present; only recompile for RC second_upload or explicit rebuild
         const buildRes = await buildOrVerifyAAB(app, {
-          forceCompile: forceCompile !== false,
+          forceCompile: true,
+          forceRebuild: Boolean(isSecondUpload),
           onProgress: (pct, msg) => {
             step.progress = Math.min(95, Math.max(20, pct));
             if (msg) step.subtitle = msg;
@@ -319,6 +334,9 @@ const executeStepHandler = async (appId, sectionId, step, pipeline, { mode, forc
         });
         if (buildRes.status === 'FAILED' || buildRes.status === 'MISSING_ANDROID') {
           return { success: false, error: buildRes.summary };
+        }
+        if (buildRes.status === 'READY_TO_COMPILE') {
+          return { success: false, error: buildRes.summary || 'No AAB on disk and compile was not started' };
         }
         step.subtitle = `${buildRes.summary || 'AAB compiled'} · Keystore: ${keyRes.primaryKeystore || 'Automated release key'}`;
         break;

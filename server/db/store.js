@@ -569,6 +569,9 @@ export const loadDb = () => {
           };
         }
       });
+      // Pipelines that crash (EPERM etc.) leave status stuck on Updating with no job.
+      // Reconcile from Play tracks / prior status before UI loads.
+      reconcileStaleUpdatingStatuses();
       saveDb();
       syncLiveTelemetry();
     } catch (e) {
@@ -580,6 +583,33 @@ export const loadDb = () => {
   }
   return db;
 };
+
+/**
+ * Clear orphaned "Updating" badges when no pipeline is actually running.
+ * Uses playProduction / statusBeforeUpdate — never invents Published for alpha-only apps.
+ */
+export function reconcileStaleUpdatingStatuses() {
+  let changed = 0;
+  for (const app of db.apps) {
+    if (app.status !== AppStatus.UPDATING && app.status !== 'Updating') continue;
+    const next =
+      app.playProduction || app.playTracks?.production
+        ? AppStatus.PUBLISHED
+        : app.statusBeforeUpdate &&
+            app.statusBeforeUpdate !== AppStatus.UPDATING &&
+            app.statusBeforeUpdate !== 'Updating'
+          ? app.statusBeforeUpdate
+          : AppStatus.DRAFT;
+    if (app.status !== next) {
+      console.log(`[Status] Clearing stale Updating → ${next} for ${app.packageName || app.id}`);
+      app.status = next;
+      app.statusBeforeUpdate = null;
+      app.publishMode = null;
+      changed += 1;
+    }
+  }
+  return changed;
+}
 
 const initializeDefaultDb = () => {
   db.apps = [...scanRealApps()];
@@ -614,7 +644,7 @@ async function syncLiveTelemetry() {
           app.playPackageExists = tracks.packageExists !== false;
 
           if (tracks.production) {
-            // Don't interrupt an in-flight factory update job label, but mark production-ready
+            // Don't interrupt an in-flight factory update job label
             if (
               app.status !== AppStatus.UPDATING &&
               app.status !== 'Updating' &&
@@ -695,7 +725,22 @@ export async function syncPlayTrackStatuses(appId = null) {
 }
 
 export const saveDb = () => {
-  fs.writeFileSync(APPS_FILE, JSON.stringify(db, null, 2), 'utf8');
+  // Windows: rename() cannot replace an existing file (EPERM) and often fails
+  // when antivirus/IDE has apps.json open. Write temp → copyFile overwrite instead.
+  const payload = JSON.stringify(db, null, 2);
+  const tmp = `${APPS_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, payload, 'utf8');
+  try {
+    fs.copyFileSync(tmp, APPS_FILE);
+  } catch (err) {
+    // Absolute last resort — direct write (same risk as before atomic change)
+    fs.writeFileSync(APPS_FILE, payload, 'utf8');
+  }
+  try {
+    fs.unlinkSync(tmp);
+  } catch {
+    // leave orphan tmp; next save uses same pid name and overwrites it
+  }
 };
 
 export const getApps = () => db.apps;

@@ -2,23 +2,35 @@ import { useState, useEffect } from 'react';
 
 export default function TesterAutomationCard({ app, stats }) {
   const [testingStatus, setTestingStatus] = useState(null);
+  const [closedTest, setClosedTest] = useState(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [closedMsg, setClosedMsg] = useState(null);
   const [customDayInput, setCustomDayInput] = useState(7);
 
   const isPersonal = (stats?.accountType || 'Personal') === 'Personal';
+  const needsClosedTest =
+    isPersonal &&
+    app &&
+    !app.playProduction &&
+    app.status !== 'Published' &&
+    app.status !== 'Approved';
 
   const fetchStatus = async () => {
     if (!app?.id || !isPersonal) return;
     setLoading(true);
     try {
-      const res = await fetch(`http://localhost:3001/api/apps/${app.id}/testing`);
-      if (res.ok) {
-        const data = await res.json();
+      const [testRes, ctRes] = await Promise.all([
+        fetch(`http://localhost:3001/api/apps/${app.id}/testing`),
+        fetch(`http://localhost:3001/api/closed-test?appId=${encodeURIComponent(app.id)}`),
+      ]);
+      if (testRes.ok) {
+        const data = await testRes.json();
         setTestingStatus(data);
         if (data.currentDay) setCustomDayInput(data.currentDay);
       }
+      if (ctRes.ok) setClosedTest(await ctRes.json());
     } catch (e) {
       console.error('Failed to load testing status', e);
     } finally {
@@ -30,7 +42,6 @@ export default function TesterAutomationCard({ app, stats }) {
     fetchStatus();
   }, [app?.id, stats?.accountType]);
 
-  // If the account detected from Play Console API is NOT a Personal account, conceal this section completely!
   if (!isPersonal) {
     return null;
   }
@@ -48,11 +59,9 @@ export default function TesterAutomationCard({ app, stats }) {
       const res = await fetch(`http://localhost:3001/api/apps/${app.id}/testing/enroll`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customDay: targetDay })
+        body: JSON.stringify({ customDay: targetDay }),
       });
-      if (res.ok) {
-        await fetchStatus();
-      }
+      if (res.ok) await fetchStatus();
     } catch (e) {
       console.error('Enroll action failed', e);
     } finally {
@@ -61,18 +70,90 @@ export default function TesterAutomationCard({ app, stats }) {
   };
 
   const handlePromote = async () => {
-    if (!confirm(`Are you ready to graduate ${app.name} from Closed Alpha directly into Google Play Production?`)) return;
+    if (!confirm(`Are you ready to graduate ${app.name} from Closed Alpha directly into Google Play Production?`))
+      return;
     setActionLoading(true);
     try {
       const res = await fetch(`http://localhost:3001/api/apps/${app.id}/testing/promote`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
       });
-      if (res.ok) {
-        await fetchStatus();
-      }
+      if (res.ok) await fetchStatus();
     } catch (e) {
       console.error('Promotion failed', e);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleClosedRegister = async () => {
+    setActionLoading(true);
+    setClosedMsg(null);
+    try {
+      const res = await fetch(`http://localhost:3001/api/apps/${app.id}/closed-test/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+      setClosedMsg(data);
+      await fetchStatus();
+    } catch (e) {
+      setClosedMsg({ success: false, error: e.message });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleFullCycle = async () => {
+    setActionLoading(true);
+    setClosedMsg(null);
+    try {
+      const res = await fetch(`http://localhost:3001/api/apps/${app.id}/closed-test/full-cycle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetTesters: 12 }),
+      });
+      const data = await res.json();
+      setClosedMsg(data);
+      await fetchStatus();
+    } catch (e) {
+      setClosedMsg({ success: false, error: e.message });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleDailyProofs = async () => {
+    setActionLoading(true);
+    setClosedMsg(null);
+    try {
+      const res = await fetch(`http://localhost:3001/api/closed-test/daily-proofs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ appId: app.id }),
+      });
+      const data = await res.json();
+      setClosedMsg(data);
+      await fetchStatus();
+    } catch (e) {
+      setClosedMsg({ success: false, error: e.message });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleMarkRegistered = async () => {
+    setActionLoading(true);
+    try {
+      await fetch(`http://localhost:3001/api/apps/${app.id}/closed-test/mark-registered`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      await fetchStatus();
+      setClosedMsg({ success: true, summary: 'Marked as registered in ClosedTest.' });
+    } catch (e) {
+      setClosedMsg({ success: false, error: e.message });
     } finally {
       setActionLoading(false);
     }
@@ -97,10 +178,9 @@ export default function TesterAutomationCard({ app, stats }) {
   const isComplete = testingStatus.statusState === 'COMPLETED';
   const isReadyToPromote = testingStatus.statusState === 'READY_FOR_PROMOTION';
   const notStarted = testingStatus.statusState === 'NOT_STARTED';
-  const progressPerc = Math.min(
-    100,
-    Math.round(((testingStatus.currentDay || 0) / 14) * 100)
-  );
+  const progressPerc = Math.min(100, Math.round(((testingStatus.currentDay || 0) / 14) * 100));
+  const exchange = closedTest?.app?.exchange;
+  const usedPartners = closedTest?.usedPartnerPackages || [];
 
   return (
     <div className="tester-card glass-panel">
@@ -125,11 +205,7 @@ export default function TesterAutomationCard({ app, stats }) {
 
         <div className="tester-card__actions">
           {isReadyToPromote && (
-            <button
-              className="btn btn--promote"
-              onClick={handlePromote}
-              disabled={actionLoading}
-            >
+            <button className="btn btn--promote" onClick={handlePromote} disabled={actionLoading}>
               🚀 Promote to Production
             </button>
           )}
@@ -150,14 +226,110 @@ export default function TesterAutomationCard({ app, stats }) {
         </div>
       </div>
 
+      {needsClosedTest && !isComplete && (
+        <div className="closed-test-panel">
+          <div className="closed-test-panel__head">
+            <div>
+              <strong>TheClosedTest exchange</strong>
+              <p>
+                Uses your existing TheClosedTest login on the ADB phone — no JWT paste. Creates the listing
+                (skips if already there), requests unique swaps, saves accepted partners, then daily open →
+                screenshot → upload.
+              </p>
+            </div>
+            <a
+              className="closed-test-link"
+              href={closedTest?.installUrl || 'https://play.google.com/store/apps/details?id=com.theneerajsec.theclosedtest'}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Install APK source ↗
+            </a>
+          </div>
+
+          <div className="closed-test-panel__actions">
+            <button
+              className="btn btn--closed-test"
+              onClick={handleFullCycle}
+              disabled={actionLoading}
+              title="API: create listing if missing, request unique swaps, save accepted partners"
+            >
+              Run full cycle (register + swaps)
+            </button>
+            <button className="btn btn--closed-daily" onClick={handleDailyProofs} disabled={actionLoading}>
+              Daily ADB proofs + upload
+            </button>
+            <button className="btn btn--enroll" onClick={handleClosedRegister} disabled={actionLoading}>
+              ADB open Add App only
+            </button>
+            {exchange?.registrationOpenedAt && !exchange?.registeredAt && (
+              <button className="btn btn--enroll" onClick={handleMarkRegistered} disabled={actionLoading}>
+                Mark registered
+              </button>
+            )}
+          </div>
+
+          {!closedTest?.hasClerkJwt && (
+            <div className="closed-test-msg ok">
+              Running on phone session via ADB (you’re already logged in). Optional Clerk JWT in Settings only
+              speeds up API swaps — not required.
+            </div>
+          )}
+
+          {(closedTest?.acceptedSwaps?.length > 0 || exchange || usedPartners.length > 0) && (
+            <div className="closed-test-meta">
+              {closedTest?.hasClerkJwt && <span>Optional API JWT: saved</span>}
+              {exchange?.closedTestAppId && <span>ClosedTest app id: {exchange.closedTestAppId}</span>}
+              {exchange?.status && <span>Status: {exchange.status}</span>}
+              {exchange?.partners?.length > 0 && (
+                <span>Partners for this app: {exchange.partners.join(', ')}</span>
+              )}
+              {(closedTest?.acceptedSwaps || [])
+                .filter((s) => s.ourPackage === app.packageName)
+                .map((s) => (
+                  <span key={s.matchId}>
+                    Accepted swap: {s.partnerTitle || s.partnerPackage} ({String(s.matchId).slice(0, 8)}…)
+                  </span>
+                ))}
+              {usedPartners.length > 0 && (
+                <span>Blocked globally (already used): {usedPartners.join(', ')}</span>
+              )}
+              {closedTest?.appsNeedingClosedTest?.length > 0 && (
+                <span>
+                  Apps still needing closed test: {closedTest.appsNeedingClosedTest.length}
+                </span>
+              )}
+            </div>
+          )}
+
+          {closedMsg && (
+            <div className={`closed-test-msg ${closedMsg.success ? 'ok' : 'err'}`}>
+              {closedMsg.summary || closedMsg.error || JSON.stringify(closedMsg)}
+              {Array.isArray(closedMsg.steps) && (
+                <ul>
+                  {closedMsg.steps.map((s) => (
+                    <li key={s}>{s}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="tester-card__progress-container">
         <div className="tester-progress-info">
-          <span><strong>Day {testingStatus.currentDay}</strong> of 14 continuous days</span>
-          <span><strong>{testingStatus.enrolledTesters} Active Testers</strong> (Required: 12 minimum) · 100% Retention</span>
+          <span>
+            <strong>Day {testingStatus.currentDay}</strong> of 14 continuous days
+          </span>
+          <span>
+            <strong>{testingStatus.enrolledTesters} Active Testers</strong> (Required: 12 minimum) · 100%
+            Retention
+          </span>
           <span>{progressPerc}% Complete</span>
         </div>
         <div className="tester-progress-bar">
-          <div 
+          <div
             className={`tester-progress-fill ${isComplete ? 'completed' : ''}`}
             style={{ width: `${progressPerc}%` }}
           ></div>

@@ -4,10 +4,22 @@ import cors from 'cors';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
-import { getApps, getAppById, updateApp, getStats, loadDb, addApp, getSettings, updateSettings, syncPlayTrackStatuses } from './db/store.js';
+import { getApps, getAppById, updateApp, getStats, loadDb, addApp, getSettings, updateSettings, syncPlayTrackStatuses, reconcileStaleUpdatingStatuses, saveDb } from './db/store.js';
 import { initWebSocket, broadcast } from './services/websocket.js';
 import { startPipelineJob, isJobRunning } from './services/queue.js';
 import { getTesterStatus, enrollTesters, promoteToProduction } from './services/testerAutomation.js';
+import {
+  getClosedTestStatus,
+  startClosedTestRegistration,
+  runDailyClosedTestProofs,
+  markClosedTestRegistered,
+  reservePartnerForApp,
+  checkAdbDevice,
+  runFullClosedTestCycle,
+  runFullClosedTestCycleAll,
+  runDailyProofAutomation,
+} from './services/closedTestExchange.js';
+import { saveClosedTestCredentials, loadClosedTestCredentials } from './services/closedTestApi.js';
 import { getLiveMonetizationMetrics } from './services/monetization.js';
 import { startAutoPublishScheduler, getPublishNeeds, drainPendingPublishes } from './services/autoPublish.js';
 import { harvestPublisherDefaultsFromExistingApps } from './services/publisherDefaults.js';
@@ -44,6 +56,18 @@ app.post('/api/apps/sync-tracks', async (req, res) => {
     res.json({ success: true, results });
   } catch (error) {
     res.status(500).json({ error: error.message || 'Track sync failed' });
+  }
+});
+
+// Clear orphaned Updating badges (pipelines crashed without restoring status)
+app.post('/api/apps/reconcile-status', (req, res) => {
+  try {
+    const changed = reconcileStaleUpdatingStatuses();
+    saveDb();
+    broadcast({ type: 'APPS_REFRESH', apps: getApps(), stats: getStats() });
+    res.json({ success: true, changed, apps: getApps(), stats: getStats() });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Reconcile failed' });
   }
 });
 
@@ -205,6 +229,106 @@ app.post('/api/apps/:id/testing/promote', async (req, res) => {
     res.json({ success: true, status });
   } catch (error) {
     res.status(500).json({ error: error.message || 'Promotion to production failed' });
+  }
+});
+
+// TheClosedTest peer-swap (Personal accounts, apps not yet in production)
+app.get('/api/closed-test', (req, res) => {
+  res.json(getClosedTestStatus(req.query.appId || null));
+});
+
+app.get('/api/closed-test/adb', async (req, res) => {
+  res.json(await checkAdbDevice());
+});
+
+app.post('/api/apps/:id/closed-test/register', async (req, res) => {
+  try {
+    const result = await startClosedTestRegistration(req.params.id);
+    res.status(result.success ? 200 : 400).json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message || 'ClosedTest registration failed' });
+  }
+});
+
+app.post('/api/apps/:id/closed-test/mark-registered', (req, res) => {
+  try {
+    const result = markClosedTestRegistered(req.params.id, req.body || {});
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/apps/:id/closed-test/reserve-partner', (req, res) => {
+  try {
+    const { partnerPackageName, partnerAppId } = req.body || {};
+    const result = reservePartnerForApp(req.params.id, partnerPackageName, partnerAppId);
+    res.status(result.success ? 200 : 400).json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/closed-test/daily-proofs', async (req, res) => {
+  try {
+    const appId = req.body?.appId || null;
+    // Prefer full API+ADB automation; fall back to ADB-only helper
+    let result;
+    try {
+      result = await runDailyProofAutomation(appId);
+    } catch (err) {
+      result = await runDailyClosedTestProofs(appId);
+      result.fallbackError = err.message;
+    }
+    res.status(result.success ? 200 : 400).json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message || 'Daily proofs failed' });
+  }
+});
+
+app.post('/api/apps/:id/closed-test/full-cycle', async (req, res) => {
+  try {
+    const result = await runFullClosedTestCycle(req.params.id, req.body || {});
+    res.status(result.success ? 200 : 400).json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message || 'Full cycle failed' });
+  }
+});
+
+app.post('/api/closed-test/full-cycle-all', async (req, res) => {
+  try {
+    const result = await runFullClosedTestCycleAll(req.body || {});
+    res.status(result.success ? 200 : 400).json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message || 'Full cycle-all failed' });
+  }
+});
+
+app.get('/api/closed-test/credentials', (req, res) => {
+  const c = loadClosedTestCredentials();
+  res.json({
+    hasClerkJwt: Boolean(c.clerkJwt),
+    apiBase: c.apiBase,
+    jwtPreview: c.clerkJwt ? `${c.clerkJwt.slice(0, 12)}…` : null,
+  });
+});
+
+app.post('/api/closed-test/credentials', (req, res) => {
+  try {
+    const saved = saveClosedTestCredentials(req.body || {});
+    if (req.body?.clerkJwt != null) {
+      updateSettings({ closedTestClerkJwt: String(req.body.clerkJwt).trim() });
+    }
+    if (req.body?.apiBase != null) {
+      updateSettings({ closedTestApiBase: String(req.body.apiBase).trim() });
+    }
+    res.json({
+      success: true,
+      hasClerkJwt: Boolean(saved.clerkJwt),
+      apiBase: saved.apiBase,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 

@@ -41,6 +41,15 @@ export default function SettingsModal({ onClose, getEngineSettings, updateEngine
     if (updateEngineSettings) {
       await updateEngineSettings(settings);
     }
+    if (settings.closedTestClerkJwt != null) {
+      try {
+        await fetch('http://localhost:3001/api/closed-test/credentials', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clerkJwt: settings.closedTestClerkJwt }),
+        });
+      } catch {}
+    }
     setIsSaving(false);
     setToast('Settings successfully updated and applied across active engine pipelines!');
     setTimeout(() => setToast(null), 4000);
@@ -136,6 +145,23 @@ export default function SettingsModal({ onClose, getEngineSettings, updateEngine
                       : '🏢 Organization accounts bypass the mandatory 14-day closed beta test and can deploy directly to production tracks.'}
                   </span>
                 </div>
+
+                {(settings.accountType || 'Personal') === 'Personal' && (
+                  <div className="form-group">
+                    <label>TheClosedTest Clerk JWT (optional)</label>
+                    <textarea
+                      rows={3}
+                      value={settings.closedTestClerkJwt || ''}
+                      placeholder="Optional — leave blank. Full cycle uses your phone login over ADB."
+                      onChange={(e) => handleChange('closedTestClerkJwt', e.target.value)}
+                      style={{ fontFamily: 'monospace', fontSize: '0.78rem' }}
+                    />
+                    <span className="form-hint">
+                      Not required. TheClosedTest keeps the session encrypted on the phone, so App Factory
+                      drives the app via ADB instead. JWT only enables a faster REST path if you want it.
+                    </span>
+                  </div>
+                )}
 
                 <div className="form-group">
                   <label>Store Contact Email (copied to new apps)</label>

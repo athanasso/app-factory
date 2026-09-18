@@ -317,7 +317,7 @@ export const clearStagedVersion = (appId) => {
 };
 
 // 3. Build or Verify Android App Bundle (AAB) via `cd android && gradlew bundleRelease`
-export const buildOrVerifyAAB = async (app, { forceCompile = true, onProgress } = {}) => {
+export const buildOrVerifyAAB = async (app, { forceCompile = false, forceRebuild = false, onProgress } = {}) => {
   console.log(`[Build Engine] Checking Android App Bundle for ${app.name}...`);
   if (!app.sourcePath || !fs.existsSync(app.sourcePath)) {
     const simulatedAab = {
@@ -342,17 +342,18 @@ export const buildOrVerifyAAB = async (app, { forceCompile = true, onProgress } 
     };
   }
 
-  // Reuse existing AAB only when explicitly allowed (dashboard verify mode)
-  if (!forceCompile) {
-    const existingAab = readExistingAab(bundleDir);
-    if (existingAab) {
-      console.log(`[Build Engine] ✔ Found verified existing release AAB for ${app.name}: ${existingAab.bundlePath}`);
-      const meta = getBuildMetadata(app.id) || {};
-      meta.aab = existingAab;
-      saveBuildMetadata(app.id, meta);
-      if (onProgress) onProgress(100, `Found verified AAB (${existingAab.sizeMb})`);
-      return existingAab;
-    }
+  // Never rebuild when a release AAB is already on disk (unless forceRebuild)
+  const existingAab = readExistingAab(bundleDir);
+  if (existingAab && !forceRebuild) {
+    console.log(`[Build Engine] ✔ Reusing existing AAB for ${app.name}: ${existingAab.bundlePath}`);
+    const meta = getBuildMetadata(app.id) || {};
+    meta.aab = existingAab;
+    saveBuildMetadata(app.id, meta);
+    if (onProgress) onProgress(100, `Reusing existing AAB (${existingAab.sizeMb})`);
+    return existingAab;
+  }
+
+  if (!forceCompile && !forceRebuild) {
     return {
       status: 'READY_TO_COMPILE',
       summary: 'Gradle environment & keystore verified · Ready to run ./gradlew bundleRelease',

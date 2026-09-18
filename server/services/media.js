@@ -11,6 +11,52 @@ const getPuppeteer = async () => {
   return puppeteerPromise;
 };
 
+/** Prefer system Chrome when Puppeteer's downloaded browser is missing. */
+function resolveChromeExecutable() {
+  const candidates = [
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    process.env.CHROME_PATH,
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    process.env.LOCALAPPDATA
+      ? path.join(process.env.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe')
+      : null,
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium-browser',
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  ].filter(Boolean);
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) return p;
+    } catch {}
+  }
+  return undefined;
+}
+
+async function launchBrowser(extraArgs = []) {
+  const puppeteer = await getPuppeteer();
+  const executablePath = resolveChromeExecutable();
+  const opts = {
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', ...extraArgs],
+  };
+  if (executablePath) {
+    opts.executablePath = executablePath;
+    console.log(`[Media Engine] Using Chrome at ${executablePath}`);
+  }
+  try {
+    return await puppeteer.launch(opts);
+  } catch (err) {
+    if (!executablePath) throw err;
+    // Retry without override if system chrome fails oddly
+    console.warn(`[Media Engine] System Chrome launch failed (${err.message}), retrying default…`);
+    return puppeteer.launch({
+      headless: true,
+      args: opts.args,
+    });
+  }
+}
+
 // Ensure media storage directory exists
 export const getMediaDir = (appId) => {
   const dir = path.resolve(process.cwd(), 'data', 'apps_content', appId, 'media');
@@ -317,11 +363,7 @@ export const generateScreenshots = async (app, onProgress, { force = false } = {
     if (onProgress) onProgress(35);
 
     const routes = discoverAppRoutes(app.sourcePath);
-    const puppeteer = await getPuppeteer();
-    browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-    });
+    browser = await launchBrowser();
     const page = await browser.newPage();
     await page.setViewport({
       width: 1080,
@@ -478,11 +520,7 @@ export const generatePromoMedia = async (app, { force = false } = {}) => {
 
   let renderedPath = fgPath;
   try {
-    const puppeteer = await getPuppeteer();
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    });
+    const browser = await launchBrowser();
     const page = await browser.newPage();
     await page.setViewport({ width: 1024, height: 500, deviceScaleFactor: 1 });
     const html = `<!DOCTYPE html>

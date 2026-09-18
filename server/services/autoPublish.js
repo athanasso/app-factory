@@ -29,6 +29,18 @@ function getUploadRecord(appId) {
   }
 }
 
+/** True when factory already got a binary onto Play (or Play already has this package live). */
+function hasPlayBinaryPresence(app, upload) {
+  if (upload?.bundleApiResult?.success === true) return true;
+  // Retrying the same versionCode forever is useless — Play already has that binary
+  const err = String(upload?.bundleApiResult?.error || '');
+  if (/version code \d+ has already been used/i.test(err)) return true;
+  if (app?.playProduction === true) return true;
+  if (app?.status === AppStatus.PUBLISHED || app?.status === 'Published') return true;
+  if (app?.playTracks?.production) return true;
+  return false;
+}
+
 function getAabPath(app) {
   const meta = getBuildMetadata(app.id);
   if (meta?.aab?.bundlePath && fs.existsSync(meta.aab.bundlePath)) {
@@ -95,6 +107,11 @@ function getLatestSourceMtime(sourcePath) {
 
 /**
  * Decide whether an app needs first upload, RevenueCat second upload, or a normal update.
+ *
+ * AutoPublish must NOT churn already-uploaded apps just because some source file
+ * mtime is newer than the last AAB (AdMob wiring, version bumps, IDE touches, etc.).
+ * Updates only when a newer AAB is sitting on disk waiting to upload, or the user
+ * runs the pipeline manually.
  */
 export function getPublishNeeds(app) {
   if (!app?.isReal || !app.sourcePath || !fs.existsSync(app.sourcePath)) {
@@ -107,7 +124,7 @@ export function getPublishNeeds(app) {
   }
 
   const upload = getUploadRecord(app.id);
-  const aabUploaded = upload?.bundleApiResult?.success === true;
+  const aabUploaded = hasPlayBinaryPresence(app, upload);
   const aabPath = getAabPath(app);
   const aabExists = Boolean(aabPath && fs.existsSync(aabPath));
   const aabMtime = aabExists ? fs.statSync(aabPath).mtimeMs : 0;
@@ -144,25 +161,48 @@ export function getPublishNeeds(app) {
     };
   }
 
-  const isFirstUpload = !aabUploaded;
-  const needsAssetGen = isFirstUpload && (!hasShots || !hasFg);
-  const needsRebuild = !aabExists || sourceMtime > aabMtime + 1000;
-  const needsUpload = !aabUploaded || needsRebuild || (aabExists && aabMtime > uploadTime + 1000);
+  // Never successfully uploaded via factory → first upload
+  if (!aabUploaded) {
+    return {
+      action: 'first_upload',
+      needsAssetGen: !hasShots || !hasFg,
+      needsRebuild: !aabExists || sourceMtime > aabMtime + 1000,
+      needsUpload: true,
+      aabPath,
+      aabUploaded: false,
+      hasShots,
+      hasFg,
+      lifecycle,
+      reason: 'no_successful_upload_record',
+    };
+  }
 
-  if (!needsUpload && !needsAssetGen) {
-    return { action: 'none', aabPath, aabUploaded, lifecycle };
+  // Already uploaded: only auto-update if a newer AAB was built after that upload
+  // (e.g. manual gradlew / second build). Source mtime alone must not retrigger.
+  const staleBuiltAab = aabExists && uploadTime > 0 && aabMtime > uploadTime + 60_000;
+  if (staleBuiltAab) {
+    return {
+      action: 'update',
+      needsRebuild: false,
+      needsUpload: true,
+      aabPath,
+      aabUploaded: true,
+      hasShots,
+      hasFg,
+      lifecycle,
+      reason: 'newer_aab_than_last_upload',
+    };
   }
 
   return {
-    action: isFirstUpload ? 'first_upload' : 'update',
-    needsAssetGen,
-    needsRebuild,
-    needsUpload,
+    action: 'none',
+    reason: 'already_uploaded',
     aabPath,
-    aabUploaded,
+    aabUploaded: true,
     hasShots,
     hasFg,
     lifecycle,
+    sourceNewerThanAab: sourceMtime > aabMtime + 1000,
   };
 }
 
@@ -188,12 +228,12 @@ async function drainPendingPublishes() {
       if (isJobRunning(app.id)) continue;
       if ([AppStatus.UPDATING, AppStatus.IN_REVIEW].includes(app.status)) continue;
 
-      console.log(`[AutoPublish] Queuing ${app.name} (${needs.action})`);
+      console.log(`[AutoPublish] Queuing ${app.name} (${needs.action}${needs.reason ? ` · ${needs.reason}` : ''})`);
       try {
         await startPipelineJob(app.id, {
           fromScratch: needs.action === 'first_upload',
           mode: needs.action,
-          forceCompile: true,
+          forceCompile: needs.action === 'first_upload' || needs.needsRebuild === true,
         });
         // Only one pipeline at a time for Gradle / Metro stability
         break;
