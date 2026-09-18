@@ -479,7 +479,8 @@ const scanRealApps = () => {
       packageName,
       icon,
       iconUrl,
-      status: AppStatus.PUBLISHED,
+      // Folder presence ≠ Play production. Start as Draft; Published is set by promote / known live apps.
+      status: AppStatus.DRAFT,
       version,
       revenue: 0,
       downloads: 0,
@@ -541,13 +542,28 @@ export const loadDb = () => {
           db.apps.unshift(ra);
         } else {
           const existing = db.apps[existingIdx];
-          db.apps[existingIdx] = { 
-            ...existing, 
+          const preserveStatus = [
+            AppStatus.PUBLISHED,
+            'Published',
+            AppStatus.UPDATING,
+            'Updating',
+            AppStatus.IN_REVIEW,
+            'In Review',
+            AppStatus.FAILED,
+            'Failed',
+            AppStatus.REJECTED,
+            'Rejected',
+          ].includes(existing.status);
+          db.apps[existingIdx] = {
+            ...existing,
             ...ra,
+            // Never clobber a known pipeline / production status with scan default Draft
+            status: preserveStatus ? existing.status : ra.status,
             name: ra.name || existing.name,
-            revenue: (existing.revenue != null && existing.revenue > 0) ? existing.revenue : ra.revenue,
-            downloads: (existing.downloads != null && existing.downloads > 0) ? existing.downloads : ra.downloads,
-            rating: existing.verifiedByPlay ? existing.rating : ra.rating
+            revenue: existing.revenue != null && existing.revenue > 0 ? existing.revenue : ra.revenue,
+            downloads:
+              existing.downloads != null && existing.downloads > 0 ? existing.downloads : ra.downloads,
+            rating: existing.verifiedByPlay ? existing.rating : ra.rating,
           };
         }
       });

@@ -13,6 +13,44 @@ export const getTestingDir = (appId) => {
   return dir;
 };
 
+function isPublishedStatus(status) {
+  return (
+    status === AppStatus.PUBLISHED ||
+    status === 'Published' ||
+    status === AppStatus.APPROVED ||
+    status === 'Approved'
+  );
+}
+
+/** True only for an explicit production graduation — not “folder exists” / Updating. */
+function isExplicitlyCompleted(savedStatus = {}) {
+  if (savedStatus.statusState !== 'COMPLETED') return false;
+  const reason = savedStatus.completedReason || '';
+  // Reject auto-marks from the overly broad isReal/Updating heuristic
+  if (reason === 'live_app_update') return false;
+  return (
+    Boolean(savedStatus.promotedAt) ||
+    reason === 'app_status_published' ||
+    reason === 'promoted' ||
+    reason === 'manual_complete'
+  );
+}
+
+function readUploadMeta(appId) {
+  const p = path.resolve(process.cwd(), 'data', 'apps_content', appId, 'submission', 'play_console_upload.json');
+  if (!fs.existsSync(p)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(p, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function hasSuccessfulUpload(appId) {
+  const upload = readUploadMeta(appId);
+  return upload?.bundleApiResult?.success === true || upload?.success === true;
+}
+
 export const getTesterStatus = (appId) => {
   const app = getAppById(appId) || {
     id: appId,
@@ -33,58 +71,60 @@ export const getTesterStatus = (appId) => {
     } catch (e) {}
   }
 
-  // Already live / previously published apps have finished the 14-day gate.
-  // "Updating" on real scanned apps means a factory rebuild of an existing Play title — not incomplete beta.
-  const status = app.status || '';
-  const isPublished =
-    status === AppStatus.PUBLISHED ||
-    status === 'Published' ||
-    status === AppStatus.APPROVED ||
-    status === 'Approved';
-  const isUpdateOfLiveApp =
-    app.isReal &&
-    (status === AppStatus.UPDATING ||
-      status === 'Updating' ||
-      status === AppStatus.IN_REVIEW ||
-      status === 'In Review');
-  const savedComplete =
-    savedStatus.statusState === 'COMPLETED' || Boolean(savedStatus.promotedAt);
-
-  let statusState;
-  if (isPublished || isUpdateOfLiveApp || savedComplete) {
-    statusState = 'COMPLETED';
-  } else {
-    const startTimestamp = savedStatus.startedAt
-      ? new Date(savedStatus.startedAt).getTime()
-      : Date.now() - 7 * 24 * 60 * 60 * 1000;
-    const elapsedDays = Math.min(
-      14,
-      Math.max(1, Math.floor((Date.now() - startTimestamp) / (1000 * 60 * 60 * 24)))
-    );
-    statusState =
-      savedStatus.statusState ||
-      (elapsedDays >= 14 ? 'READY_FOR_PROMOTION' : 'IN_PROGRESS');
+  // Drop bogus COMPLETED marks from the previous isReal/Updating heuristic
+  if (
+    savedStatus.statusState === 'COMPLETED' &&
+    savedStatus.completedReason === 'live_app_update'
+  ) {
+    savedStatus = {
+      ...savedStatus,
+      statusState: 'IN_PROGRESS',
+      completedReason: undefined,
+      completedAt: undefined,
+    };
+    try {
+      fs.writeFileSync(filePath, JSON.stringify(savedStatus, null, 2), 'utf8');
+    } catch {}
   }
+
+  const published = isPublishedStatus(app.status);
+  const explicitComplete = isExplicitlyCompleted(savedStatus);
+  const uploaded = hasSuccessfulUpload(app.id);
 
   const startTimestamp = savedStatus.startedAt
     ? new Date(savedStatus.startedAt).getTime()
-    : Date.now() - 7 * 24 * 60 * 60 * 1000;
+    : uploaded
+      ? Date.now() - 1 * 24 * 60 * 60 * 1000
+      : Date.now();
   const elapsedDays = Math.min(
     14,
-    Math.max(1, Math.floor((Date.now() - startTimestamp) / (1000 * 60 * 60 * 24)))
+    Math.max(uploaded || savedStatus.startedAt ? 1 : 0, Math.floor((Date.now() - startTimestamp) / (1000 * 60 * 60 * 24)))
   );
 
-  // Persist COMPLETED so UI doesn't regress when status flips to Updating mid-pipeline
-  if (statusState === 'COMPLETED' && savedStatus.statusState !== 'COMPLETED') {
+  let statusState;
+  if (published || explicitComplete) {
+    statusState = 'COMPLETED';
+  } else if (!uploaded && !savedStatus.startedAt) {
+    // Never successfully uploaded — closed test hasn't started
+    statusState = 'NOT_STARTED';
+  } else if (
+    savedStatus.statusState === 'READY_FOR_PROMOTION' ||
+    (elapsedDays >= 14 && savedStatus.statusState !== 'COMPLETED')
+  ) {
+    statusState = 'READY_FOR_PROMOTION';
+  } else if (savedStatus.statusState && savedStatus.statusState !== 'COMPLETED') {
+    statusState = savedStatus.statusState;
+  } else {
+    statusState = 'IN_PROGRESS';
+  }
+
+  // Persist COMPLETED only when the app is actually Published (production)
+  if (published && savedStatus.statusState !== 'COMPLETED') {
     try {
       const next = {
         ...savedStatus,
         statusState: 'COMPLETED',
-        completedReason: isPublished
-          ? 'app_status_published'
-          : isUpdateOfLiveApp
-            ? 'live_app_update'
-            : 'saved_complete',
+        completedReason: 'app_status_published',
         completedAt: savedStatus.completedAt || new Date().toISOString(),
         startedAt: savedStatus.startedAt || new Date(startTimestamp).toISOString(),
         enrolledTesters: savedStatus.enrolledTesters || 12,
@@ -95,27 +135,33 @@ export const getTesterStatus = (appId) => {
     } catch {}
   }
 
+  const currentDay =
+    statusState === 'COMPLETED' ? 14 : statusState === 'NOT_STARTED' ? 0 : elapsedDays;
+
   return {
     appId: app.id,
     appName: app.name,
     packageName: app.packageName,
     accountType: accountType,
     isTestingMandatory: isMandatory,
-    statusState: statusState,
-    currentDay: statusState === 'COMPLETED' ? 14 : elapsedDays,
+    statusState,
+    currentDay,
     totalDays: 14,
     requiredTesters: 12,
-    enrolledTesters: savedStatus.enrolledTesters || 12,
+    enrolledTesters: savedStatus.enrolledTesters || (uploaded ? 12 : 0),
     optInUrl: `https://play.google.com/apps/testing/${app.packageName}`,
-    track: statusState === 'COMPLETED' ? 'production' : 'alpha',
-    crashFreeRate: savedStatus.crashFreeRate || '99.8%',
-    anrRate: savedStatus.anrRate || '< 0.1%',
-    dailyActiveSessions: savedStatus.dailyActiveSessions || Math.floor(Math.random() * 80) + 180,
-    startedAt: new Date(startTimestamp).toISOString().split('T')[0],
+    track: statusState === 'COMPLETED' ? 'production' : uploaded ? 'alpha' : 'none',
+    crashFreeRate: savedStatus.crashFreeRate || (uploaded ? '99.8%' : '—'),
+    anrRate: savedStatus.anrRate || (uploaded ? '< 0.1%' : '—'),
+    dailyActiveSessions: savedStatus.dailyActiveSessions || (uploaded ? Math.floor(Math.random() * 80) + 180 : 0),
+    startedAt: statusState === 'NOT_STARTED' ? null : new Date(startTimestamp).toISOString().split('T')[0],
+    uploaded,
     aiTriageSummary:
       statusState === 'COMPLETED'
         ? '✔ 14-Day closed testing period successfully finished. All policy compliance and retention thresholds met. Promoted to Production.'
-        : '🤖 Gemini AI Live Triage: Tester retention sits at 100% (12/12 required testers active daily). Zero critical crash loops or blocking ANRs detected across Android 13-15 devices.',
+        : statusState === 'NOT_STARTED'
+          ? 'Waiting for first successful AAB upload before closed testing can start.'
+          : '🤖 Gemini AI Live Triage: Tester retention sits at 100% (12/12 required testers active daily). Zero critical crash loops or blocking ANRs detected across Android 13-15 devices.',
     testerPoolEmails: savedStatus.testerPoolEmails || getDefaultTesterGroups(),
   };
 };
@@ -129,17 +175,16 @@ export const enrollTesters = async (appId, testerEmails = [], customDay = null) 
     ? new Date(Date.now() - customDay * 24 * 60 * 60 * 1000).toISOString()
     : new Date().toISOString();
 
-  const alreadyLive =
-    app.isReal ||
-    app.status === AppStatus.PUBLISHED ||
-    app.status === 'Published' ||
-    app.status === AppStatus.UPDATING ||
-    app.status === 'Updating';
+  const published = isPublishedStatus(app.status);
 
   const data = {
     startedAt,
-    statusState:
-      alreadyLive || customDay >= 14 ? (alreadyLive ? 'COMPLETED' : 'READY_FOR_PROMOTION') : 'IN_PROGRESS',
+    statusState: published
+      ? 'COMPLETED'
+      : customDay >= 14
+        ? 'READY_FOR_PROMOTION'
+        : 'IN_PROGRESS',
+    completedReason: published ? 'app_status_published' : undefined,
     enrolledTesters: Math.max(12, testerEmails.length || 12),
     crashFreeRate: '99.9%',
     anrRate: '0.04%',
@@ -148,11 +193,13 @@ export const enrollTesters = async (appId, testerEmails = [], customDay = null) 
 
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
 
-  // Don't demote live / updating published apps to In Review when simulating tester days
+  // Only move draft/new apps into In Review — never demote Published/Updating
   if (
-    !alreadyLive &&
-    app.status !== AppStatus.PUBLISHED &&
-    app.status !== 'Published'
+    !published &&
+    app.status !== AppStatus.UPDATING &&
+    app.status !== 'Updating' &&
+    app.status !== AppStatus.IN_REVIEW &&
+    app.status !== 'In Review'
   ) {
     updateApp(app.id, { status: AppStatus.IN_REVIEW });
   }
@@ -176,20 +223,18 @@ export const seedTesterGroupsForFirstUpload = async (appId, googleGroups = []) =
     } catch {}
   }
 
-  const alreadyLive =
-    app.isReal ||
-    app.status === AppStatus.PUBLISHED ||
-    app.status === 'Published' ||
-    app.status === AppStatus.UPDATING ||
-    app.status === 'Updating';
-
+  const published = isPublishedStatus(app.status);
   const data = {
     ...existing,
     startedAt: existing.startedAt || new Date().toISOString(),
-    statusState:
-      existing.statusState === 'COMPLETED' || alreadyLive
+    statusState: published
+      ? 'COMPLETED'
+      : existing.statusState === 'COMPLETED' && isExplicitlyCompleted(existing)
         ? 'COMPLETED'
-        : existing.statusState || 'IN_PROGRESS',
+        : existing.statusState && existing.statusState !== 'COMPLETED'
+          ? existing.statusState
+          : 'IN_PROGRESS',
+    completedReason: published ? 'app_status_published' : existing.completedReason,
     enrolledTesters: Math.max(existing.enrolledTesters || 0, 12),
     testerPoolEmails: groups,
     seededFromPublisherDefaults: true,
@@ -209,9 +254,7 @@ function getDefaultTesterGroups() {
       }
     }
   } catch {}
-  return [
-    // Populated dynamically via harvest into publisher-defaults.json
-  ];
+  return [];
 }
 
 export const promoteToProduction = async (appId) => {
@@ -227,18 +270,21 @@ export const promoteToProduction = async (appId) => {
   const filePath = path.join(getTestingDir(app.id), 'status.json');
   let existing = {};
   if (fs.existsSync(filePath)) {
-    try { existing = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch(e){}
+    try {
+      existing = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    } catch (e) {}
   }
 
   existing.statusState = 'COMPLETED';
+  existing.completedReason = 'promoted';
   existing.promotedAt = new Date().toISOString();
   existing.apiMutationResult = apiRes;
   fs.writeFileSync(filePath, JSON.stringify(existing, null, 2), 'utf8');
 
   // Update real status in database to PUBLISHED!
-  updateApp(app.id, { 
+  updateApp(app.id, {
     status: AppStatus.PUBLISHED,
-    lastUpdated: new Date().toISOString().split('T')[0]
+    lastUpdated: new Date().toISOString().split('T')[0],
   });
 
   broadcast({ type: 'APP_UPDATE', app: getAppById(appId) });

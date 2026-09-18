@@ -94,8 +94,13 @@ export default function TesterAutomationCard({ app, stats }) {
 
   if (!testingStatus) return null;
 
-  const isComplete = testingStatus.statusState === 'COMPLETED' || testingStatus.currentDay >= 14;
-  const progressPerc = Math.min(100, Math.round((testingStatus.currentDay / 14) * 100));
+  const isComplete = testingStatus.statusState === 'COMPLETED';
+  const isReadyToPromote = testingStatus.statusState === 'READY_FOR_PROMOTION';
+  const notStarted = testingStatus.statusState === 'NOT_STARTED';
+  const progressPerc = Math.min(
+    100,
+    Math.round(((testingStatus.currentDay || 0) / 14) * 100)
+  );
 
   return (
     <div className="tester-card glass-panel">
@@ -107,17 +112,19 @@ export default function TesterAutomationCard({ app, stats }) {
               <h4>14-Day Automated Beta Test Suite</h4>
               <span className="badge badge--personal">Personal Account Requirement</span>
               <span className={`badge ${isComplete ? 'badge--success' : 'badge--alpha'}`}>
-                Track: {testingStatus.track.toUpperCase()}
+                Track: {(testingStatus.track || 'none').toUpperCase()}
               </span>
             </div>
             <p>
-              Google Play policy enforces a continuous 14-day closed test with ≥12 testers before production publishing.
+              {notStarted
+                ? 'Closed testing starts after the first successful AAB upload to Play.'
+                : 'Google Play policy enforces a continuous 14-day closed test with ≥12 testers before production publishing.'}
             </p>
           </div>
         </div>
 
         <div className="tester-card__actions">
-          {isComplete && testingStatus.statusState !== 'COMPLETED' && (
+          {isReadyToPromote && (
             <button
               className="btn btn--promote"
               onClick={handlePromote}
@@ -126,8 +133,10 @@ export default function TesterAutomationCard({ app, stats }) {
               🚀 Promote to Production
             </button>
           )}
-          {testingStatus.statusState === 'COMPLETED' ? (
+          {isComplete ? (
             <span className="promoted-badge">✨ Promoted to Production</span>
+          ) : notStarted ? (
+            <span className="badge badge--alpha">Not uploaded yet</span>
           ) : (
             <button
               className="btn btn--enroll"
