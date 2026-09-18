@@ -33,11 +33,17 @@ function getUploadRecord(appId) {
 function hasPlayBinaryPresence(app, upload) {
   if (upload?.bundleApiResult?.success === true) return true;
   // Retrying the same versionCode forever is useless — Play already has that binary
-  const err = String(upload?.bundleApiResult?.error || '');
+  const err = String(upload?.bundleApiResult?.error || upload?.error || '');
   if (/version code \d+ has already been used/i.test(err)) return true;
   if (app?.playProduction === true) return true;
   if (app?.status === AppStatus.PUBLISHED || app?.status === 'Published') return true;
   if (app?.playTracks?.production) return true;
+  // Manual or prior factory upload already on a closed-test track — do NOT re-run first_upload
+  if (app?.playTracks?.alpha || app?.playTracks?.internal || app?.playTracks?.beta) return true;
+  if (app?.playPackageExists === true && app?.playTracks && !app.playTracks.error) {
+    // Package exists on Play Console even if no release yet — still not a "create from scratch" case
+    // but allow first_upload only when zero tracks. If packageExists with empty tracks, still first upload.
+  }
   return false;
 }
 

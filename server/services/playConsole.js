@@ -392,8 +392,19 @@ export async function uploadBundleViaAPI(packageName, aabFilePath, track = 'inte
 
     return { success: true, editId, versionCode, track, summary: `✔ Live API v3: Physical AAB uploaded & staged to Play track '${track}' (vCode ${versionCode})` };
   } catch (err) {
-    console.warn(`[Play API Mutation] Real bundle upload encountered Play Console API status: ${err.message}`);
-    return { success: false, error: err.message };
+    const msg = err.message || String(err);
+    // Manual upload already consumed this versionCode — treat as already on Play, not a hard failure
+    if (/version code \d+ has already been used/i.test(msg)) {
+      console.warn(`[Play API Mutation] Version code already on Play for ${packageName} — treating as uploaded.`);
+      return {
+        success: true,
+        alreadyOnPlay: true,
+        error: msg,
+        summary: `✔ AAB already on Play (${msg.replace(/\.$/, '')}) — skipped re-upload`,
+      };
+    }
+    console.warn(`[Play API Mutation] Real bundle upload encountered Play Console API status: ${msg}`);
+    return { success: false, error: msg };
   }
 }
 
