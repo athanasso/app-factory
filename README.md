@@ -141,6 +141,10 @@ Settings → set **Personal** vs **Organization**, projects root, and auto-uploa
 | POST | `/api/apps/:id/closed-test/full-cycle` | Register + unique swaps (ADB/API) |
 | POST | `/api/closed-test/daily-proofs` | Daily partner screenshots + upload |
 | POST | `/api/privacy-policies/sync-urls` | Sync portfolio privacy URLs into listings |
+| GET | `/api/play-console/browser/status` | Chrome session status (ShortsMachine profile) |
+| POST | `/api/play-console/browser/setup` | Connect Chrome / confirm Play Console login |
+| POST | `/api/apps/:id/play-console/fill` | Scrape-fill App content for one app |
+| POST | `/api/play-console/fill-all` | Scrape-fill App content for all Play apps |
 | WS | `ws://localhost:3001/ws` | Live pipeline events |
 
 ---
@@ -148,8 +152,10 @@ Settings → set **Personal** vs **Organization**, projects root, and auto-uploa
 ## Notes
 
 - **New Play apps** must be created once in Play Console (API cannot create the package shell). After that, factory uploads AABs and syncs overview/listings.  
+- **App content** (privacy policy field, ads declaration, IARC content rating, Data Safety) has no public API. App Factory fills these via a dedicated Chrome profile (same pattern as ShortsMachine): Pipeline card **Connect Chrome** / **Fill App Content**, or `POST /api/apps/:id/play-console/fill`. Reuses `D:\Projects\generate\ShortsMachine\chrome_profile` when that session is ready.  
 - **Personal accounts** need 14 days × ≥12 testers before production; Organization accounts can go direct.  
 - AutoPublish will not keep re-uploading apps that already have a successful binary / production track. Use **Run Pipeline** manually for intentional updates.  
+- RevenueCat **second_upload** is manual-only (AutoPublish will not rebuild on its own).  
 
 ---
 

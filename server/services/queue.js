@@ -299,20 +299,65 @@ const executeStepHandler = async (appId, sectionId, step, pipeline, { mode, forc
         step.subtitle = iconRes.summary || '✔ High-Res 512x512 Store Icon extracted and verified';
         break;
       }
-      case 'content_rating':
-        step.subtitle = '✔ IARC Questionnaire completed: PEGI 3 / Rated for Everyone';
+      case 'content_rating': {
+        if (isFirstUpload) {
+          try {
+            const { fillPlayConsoleAppContent, getPlayConsoleBrowserStatus } = await import(
+              './playConsoleBrowser.js'
+            );
+            const status = getPlayConsoleBrowserStatus();
+            if (status.ready) {
+              const fill = await fillPlayConsoleAppContent(app, {
+                steps: ['privacy_policy', 'ads', 'content_rating', 'data_safety'],
+                minimized: true,
+              });
+              step.subtitle = fill.summary || '✔ App content via Chrome (privacy / ads / rating / data safety)';
+              if (!fill.success) {
+                return {
+                  success: false,
+                  error: fill.summary || 'Play Console App content fill incomplete — check Chrome session',
+                };
+              }
+            } else {
+              step.subtitle =
+                '⚠ Chrome Play Console session not ready — Connect Chrome, then re-run (IARC skipped)';
+            }
+          } catch (err) {
+            return { success: false, error: `Content rating / App content scrape failed: ${err.message}` };
+          }
+        } else {
+          step.subtitle = '✔ Content rating unchanged (not first upload)';
+        }
         break;
+      }
       case 'data_safety': {
         let privacySummary = '';
         if (isFirstUpload) {
           const privacy = await generatePrivacyPolicy(app, { force: false });
           privacySummary = privacy.summary || privacy.url || '';
+          const fresh = getAppById(appId);
+          const fill = fresh?.playConsoleBrowserFill;
+          if (fill?.success && fill?.steps?.data_safety) {
+            step.subtitle = privacySummary
+              ? `✔ Data Safety filled via Chrome · ${privacySummary}`
+              : '✔ Data Safety filled via Chrome (with content_rating step)';
+          } else if (fill && !fill.success) {
+            return {
+              success: false,
+              error: 'Data Safety Console fill incomplete — use Fill App Content or Connect Chrome',
+            };
+          } else {
+            const { loadPublisherDefaults } = await import('./publisherDefaults.js');
+            const d = loadPublisherDefaults();
+            step.subtitle = `⚠ Data Safety needs Connect Chrome · ${privacySummary || d.contactEmail || ''}`;
+          }
+        } else {
+          const { loadPublisherDefaults } = await import('./publisherDefaults.js');
+          const d = loadPublisherDefaults();
+          step.subtitle = privacySummary
+            ? privacySummary
+            : `✔ Data Safety unchanged · ${d.contactEmail || ''}`;
         }
-        const { loadPublisherDefaults } = await import('./publisherDefaults.js');
-        const d = loadPublisherDefaults();
-        step.subtitle = privacySummary
-          ? privacySummary
-          : `✔ Data Safety + contact ${d.contactEmail} · privacy ${d.privacyPolicyUrl || d.contactWebsite}`;
         break;
       }
       case 'verify_assets':

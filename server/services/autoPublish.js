@@ -141,18 +141,22 @@ export function getPublishNeeds(app) {
   const hasFg = hasFeatureGraphicPng(app.id);
   const lifecycle = getReleaseLifecycleStatus(app);
 
-  // Phase 2: production RevenueCat key landed after first Play upload
+  // Phase 2 RevenueCat rebuild — NEVER auto. Only when you explicitly Run Pipeline
+  // with mode second_upload (otherwise every app with a goog_ key rebuilds forever).
   if (lifecycle.nextAction === 'second_upload') {
     return {
-      action: 'second_upload',
-      needsRebuild: true,
-      needsUpload: true,
+      action: 'none',
+      reason: 'second_upload_manual_only',
+      needsRebuild: false,
+      needsUpload: false,
       aabPath,
       aabUploaded,
       hasShots,
       hasFg,
       lifecycle,
-      summary: lifecycle.summary,
+      summary:
+        lifecycle.summary ||
+        'RevenueCat production key ready — run second upload manually if you want a rebuild',
     };
   }
 

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import TesterAutomationCard from './TesterAutomationCard';
+import PlayConsoleBrowserCard from './PlayConsoleBrowserCard';
 
 const CheckIcon = () => (
   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
@@ -247,6 +248,7 @@ export default function PipelineView({ app, stats, isRunning, onRunPipeline, onR
 
       {/* Mandatory 14-Day Tester Automation Suite (Displayed ONLY when accountType === 'Personal') */}
       <TesterAutomationCard app={app} stats={stats} />
+      <PlayConsoleBrowserCard app={app} />
 
       {/* Progress Bar */}
       <div className="progress-section">

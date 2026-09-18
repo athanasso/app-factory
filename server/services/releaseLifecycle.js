@@ -144,6 +144,16 @@ export function getReleaseLifecycleStatus(app) {
     required: true,
   });
 
+  const browserFill = app.playConsoleBrowserFill || {};
+  checklist.push({
+    id: 'console_app_content',
+    title: 'App content via Chrome (privacy, ads, rating, data safety)',
+    done: Boolean(browserFill.success),
+    required: true,
+    note: 'No public API — filled with dedicated Chrome profile (ShortsMachine-style). Use Connect Chrome + Fill App Content.',
+    manual: !browserFill.success,
+  });
+
   if (usage.usesAdMob) {
     checklist.push({
       id: 'admob_ids',
@@ -192,7 +202,7 @@ export function getReleaseLifecycleStatus(app) {
       title: 'Second upload: rebuild AAB with production RevenueCat key',
       done: Boolean(life.secondUploadAt),
       required: true,
-      note: 'Factory auto-runs this once the goog_ key is present after first upload.',
+      note: 'Run Pipeline → second_upload manually after Play IAP + RC are configured. AutoPublish will not rebuild on its own.',
     });
   }
 
@@ -222,7 +232,12 @@ export function getReleaseLifecycleStatus(app) {
   let phase = life.phase || 'not_started';
   if (!aabUploaded && !life.firstUploadAt) phase = 'not_started';
   else if (usage.usesRevenueCat && !life.secondUploadAt) {
-    phase = rc.ready ? 'ready_for_second_upload' : 'awaiting_revenuecat_setup';
+    // Already on Play with a production RC key (e.g. manual upload) — no auto rebuild needed
+    if (rc.ready && (app.playTracks?.alpha || app.playTracks?.internal || app.playProduction)) {
+      phase = life.revenueCatReadyAt ? 'ready_for_second_upload' : 'closed_testing';
+    } else {
+      phase = rc.ready ? 'ready_for_second_upload' : 'awaiting_revenuecat_setup';
+    }
   } else if (life.secondUploadAt || (!usage.usesRevenueCat && aabUploaded)) {
     if (testing?.statusState === 'COMPLETED') phase = 'production';
     else if (testing?.statusState === 'READY_FOR_PROMOTION') phase = 'ready_to_promote';
@@ -260,7 +275,7 @@ export function getReleaseLifecycleStatus(app) {
         : nextAction === 'wait_revenuecat'
           ? `Waiting on RevenueCat setup (${pendingManual.length} manual step(s)), then second upload`
           : nextAction === 'second_upload'
-            ? 'RevenueCat production key ready — queue second AAB upload'
+            ? 'RevenueCat key ready — run second upload manually if you want a rebuild (not auto)'
             : nextAction === 'promote_production'
               ? 'Closed testing complete — promote to production'
               : phase === 'closed_testing'

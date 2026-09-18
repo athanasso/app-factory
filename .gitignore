@@ -26,6 +26,9 @@ service-account.json
 # Local runtime DB and AI generated content / testing telemetry
 data/
 
+# Dedicated Play Console Chrome profile (ShortsMachine-style Google login)
+chrome_profile/
+
 # Android & native release binaries
 *.apk
 *.aab

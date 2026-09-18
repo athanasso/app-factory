@@ -29,6 +29,12 @@ import {
   saveReleaseLifecycle,
   markRevenueCatReady,
 } from './services/releaseLifecycle.js';
+import {
+  getPlayConsoleBrowserStatus,
+  setupPlayConsoleSession,
+  fillPlayConsoleAppContent,
+  fillAllPlayConsoleAppContent,
+} from './services/playConsoleBrowser.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -149,6 +155,60 @@ app.post('/api/privacy-policies/sync-urls', async (req, res) => {
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message || 'Privacy URL sync failed' });
+  }
+});
+
+// Play Console Chrome session (ShortsMachine-style dedicated profile)
+app.get('/api/play-console/browser/status', (req, res) => {
+  res.json(getPlayConsoleBrowserStatus());
+});
+
+app.post('/api/play-console/browser/setup', async (req, res) => {
+  try {
+    const result = await setupPlayConsoleSession();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Play Console Chrome setup failed' });
+  }
+});
+
+app.post('/api/apps/:id/play-console/fill', async (req, res) => {
+  try {
+    const appItem = getAppById(req.params.id);
+    if (!appItem) return res.status(404).json({ error: 'App not found' });
+    const steps = req.body?.steps;
+    const result = await fillPlayConsoleAppContent(appItem, {
+      steps: Array.isArray(steps) && steps.length ? steps : undefined,
+      minimized: req.body?.minimized !== false,
+    });
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({
+      error: error.message || 'Play Console fill failed',
+      diagnostics: error.diagnostics || null,
+    });
+  }
+});
+
+app.post('/api/play-console/browser/probe', async (req, res) => {
+  try {
+    const { withProbe } = await import('./services/playConsoleBrowser.js');
+    const result = await withProbe();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message, diagnostics: error.diagnostics || null });
+  }
+});
+
+app.post('/api/play-console/fill-all', async (req, res) => {
+  try {
+    const result = await fillAllPlayConsoleAppContent({
+      steps: req.body?.steps,
+      minimized: req.body?.minimized !== false,
+    });
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Play Console fill-all failed' });
   }
 });
 
