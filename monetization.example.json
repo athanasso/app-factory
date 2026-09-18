@@ -1,5 +1,5 @@
 {
-  "_comment": "Configuration for live monetization telemetry directly from Google AdMob and Google Play Console",
+  "_comment": "Configuration for live monetization telemetry and first-upload AdMob/RevenueCat ID wiring",
   "adMob": {
     "publisherId": "pub-XXXXXXXXXXXXXXXX",
     "useServiceAccount": true,
@@ -8,5 +8,22 @@
   "googlePlay": {
     "reportBucket": "gs://pubsite_prod_00000000000/earnings/",
     "note": "Paste your Cloud Storage URI from Play Console -> Download Reports -> Financial Reports. Grant your Service Account the Storage Object Viewer role in GCP IAM."
+  },
+  "apps": {
+    "_example.package.name": {
+      "admob": {
+        "androidAppId": "ca-app-pub-XXXXXXXXXXXXXXXX~YYYYYYYYYY",
+        "iosAppId": "ca-app-pub-XXXXXXXXXXXXXXXX~YYYYYYYYYY",
+        "banner": "ca-app-pub-XXXXXXXXXXXXXXXX/YYYYYYYYYY",
+        "interstitial": "ca-app-pub-XXXXXXXXXXXXXXXX/YYYYYYYYYY",
+        "rewarded": "ca-app-pub-XXXXXXXXXXXXXXXX/YYYYYYYYYY",
+        "rewardedInterstitial": "ca-app-pub-XXXXXXXXXXXXXXXX/YYYYYYYYYY",
+        "native": "ca-app-pub-XXXXXXXXXXXXXXXX/YYYYYYYYYY"
+      },
+      "revenueCat": {
+        "androidApiKey": "goog_XXXXXXXX",
+        "iosApiKey": "appl_XXXXXXXX"
+      }
+    }
   }
 }

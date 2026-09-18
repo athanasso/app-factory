@@ -10,7 +10,10 @@ export default function SettingsModal({ onClose, getEngineSettings, updateEngine
     autoPublishPending: true,
     autoTranslateLocales: 49,
     autoSubmitInReview: false,
-    telemetryPollingMinutes: 30
+    telemetryPollingMinutes: 30,
+    contactEmail: '',
+    contactWebsite: '',
+    testerGoogleGroups: ''
   });
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -132,6 +135,52 @@ export default function SettingsModal({ onClose, getEngineSettings, updateEngine
                       ? '⚠️ Google Play requires Personal developer accounts created after Nov 2023 to run a 14-day closed beta with at least 12 testers. App Factory enables Automated Beta Triage when Personal is selected.' 
                       : '🏢 Organization accounts bypass the mandatory 14-day closed beta test and can deploy directly to production tracks.'}
                   </span>
+                </div>
+
+                <div className="form-group">
+                  <label>Store Contact Email (copied to new apps)</label>
+                  <input
+                    type="email"
+                    value={settings.contactEmail || ''}
+                    placeholder="Harvested from existing Play apps…"
+                    onChange={(e) => handleChange('contactEmail', e.target.value)}
+                  />
+                  <span className="form-hint">Pulled from Play Console overview on your published apps (edits.details).</span>
+                </div>
+
+                <div className="form-group">
+                  <label>Developer Website</label>
+                  <input
+                    type="url"
+                    value={settings.contactWebsite || ''}
+                    placeholder="Harvested from existing Play apps…"
+                    onChange={(e) => handleChange('contactWebsite', e.target.value)}
+                  />
+                  <span className="form-hint">Developer site on Play overview only — not used for privacy pages.</span>
+                </div>
+
+                <div className="form-group">
+                  <label>Privacy Policy URL Template (Vercel)</label>
+                  <input
+                    type="url"
+                    value={settings.privacyPolicyUrl || 'https://{slug}-privacy-policy.vercel.app/'}
+                    placeholder="https://{slug}-privacy-policy.vercel.app/"
+                    onChange={(e) => handleChange('privacyPolicyUrl', e.target.value)}
+                  />
+                  <span className="form-hint">
+                    Per-app Vercel deploys you upload manually. {'{slug}'} becomes e.g. eortologio → https://eortologio-privacy-policy.vercel.app/
+                  </span>
+                </div>
+
+                <div className="form-group">
+                  <label>Closed-Test Google Groups (comma-separated)</label>
+                  <input
+                    type="text"
+                    value={settings.testerGoogleGroups || ''}
+                    placeholder="Harvested from alpha/internal tester tracks…"
+                    onChange={(e) => handleChange('testerGoogleGroups', e.target.value)}
+                  />
+                  <span className="form-hint">Harvested from existing closed-test tracks and applied to new first-time uploads.</span>
                 </div>
 
                 <div className="form-group">

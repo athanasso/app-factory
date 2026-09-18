@@ -3,6 +3,7 @@ import path from 'path';
 import { getApps, getSettings, AppStatus } from '../db/store.js';
 import { getBuildMetadata } from './build.js';
 import { isJobRunning, startPipelineJob } from './queue.js';
+import { getReleaseLifecycleStatus } from './releaseLifecycle.js';
 
 const CONTENT_ROOT = () => path.resolve(process.cwd(), 'data', 'apps_content');
 
@@ -93,7 +94,7 @@ function getLatestSourceMtime(sourcePath) {
 }
 
 /**
- * Decide whether an app needs a first-time Play upload or an AAB update.
+ * Decide whether an app needs first upload, RevenueCat second upload, or a normal update.
  */
 export function getPublishNeeds(app) {
   if (!app?.isReal || !app.sourcePath || !fs.existsSync(app.sourcePath)) {
@@ -115,13 +116,41 @@ export function getPublishNeeds(app) {
 
   const hasShots = hasRealScreenshotPngs(app.id);
   const hasFg = hasFeatureGraphicPng(app.id);
+  const lifecycle = getReleaseLifecycleStatus(app);
+
+  // Phase 2: production RevenueCat key landed after first Play upload
+  if (lifecycle.nextAction === 'second_upload') {
+    return {
+      action: 'second_upload',
+      needsRebuild: true,
+      needsUpload: true,
+      aabPath,
+      aabUploaded,
+      hasShots,
+      hasFg,
+      lifecycle,
+      summary: lifecycle.summary,
+    };
+  }
+
+  // Waiting on manual RevenueCat / Play IAP setup — do not auto-build yet
+  if (lifecycle.nextAction === 'wait_revenuecat') {
+    return {
+      action: 'none',
+      reason: 'awaiting_revenuecat_setup',
+      aabUploaded,
+      lifecycle,
+      summary: lifecycle.summary,
+    };
+  }
+
   const isFirstUpload = !aabUploaded;
   const needsAssetGen = isFirstUpload && (!hasShots || !hasFg);
   const needsRebuild = !aabExists || sourceMtime > aabMtime + 1000;
   const needsUpload = !aabUploaded || needsRebuild || (aabExists && aabMtime > uploadTime + 1000);
 
   if (!needsUpload && !needsAssetGen) {
-    return { action: 'none', aabPath, aabUploaded };
+    return { action: 'none', aabPath, aabUploaded, lifecycle };
   }
 
   return {
@@ -133,6 +162,7 @@ export function getPublishNeeds(app) {
     aabUploaded,
     hasShots,
     hasFg,
+    lifecycle,
   };
 }
 
@@ -179,7 +209,7 @@ async function drainPendingPublishes() {
 export function startAutoPublishScheduler({ initialDelayMs = 8000, intervalMs = 5 * 60 * 1000 } = {}) {
   if (schedulerStarted) return;
   schedulerStarted = true;
-  console.log('[AutoPublish] Scheduler armed — will upload/update apps missing Play AAB uploads');
+  console.log(`[AutoPublish] Scheduler armed — will upload/update apps + RC second uploads when ready`);
   setTimeout(() => {
     drainPendingPublishes().catch((err) => console.warn('[AutoPublish]', err.message));
   }, initialDelayMs);

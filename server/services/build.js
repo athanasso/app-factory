@@ -76,15 +76,15 @@ export const verifyCodebase = async (app) => {
   }
 };
 
-// 1B. Automatically increment versionCode and patch versionName in native Android & Expo configs
-export const incrementAppVersion = async (app) => {
+// 1B. Automatically increment versionCode and/or versionName in native Android & Expo configs
+export const incrementAppVersion = async (app, { force = false, nameOnly = false, majorNameBump = false } = {}) => {
   console.log(`[Build Engine] Checking & incrementing app release versions for ${app.name}...`);
   if (!app.sourcePath || !fs.existsSync(app.sourcePath)) {
     return { success: false, summary: 'No local codebase path found for version bumping' };
   }
 
   const stagedPath = path.join(getBuildDir(app.id), 'version_staged.json');
-  if (fs.existsSync(stagedPath)) {
+  if (!force && fs.existsSync(stagedPath)) {
     try {
       const stagedMeta = JSON.parse(fs.readFileSync(stagedPath, 'utf8'));
       console.log(`[Build Engine] ✔ Version previously staged for ${app.name} -> Retaining from initial release run`);
@@ -102,47 +102,91 @@ export const incrementAppVersion = async (app) => {
   let newVersionName = null;
   let modifiedFiles = [];
 
+  const bumpVersionName = (current) => {
+    const parts = String(current || '1.0.0').split('.');
+    while (parts.length < 3) parts.push('0');
+    if (majorNameBump) {
+      const major = (parseInt(parts[0], 10) || 1) + 1;
+      return `${major}.0.0`;
+    }
+    const patch = (parseInt(parts[2], 10) || 0) + 1;
+    return `${parts[0]}.${parts[1]}.${patch}`;
+  };
+
   try {
-    // 1. Check android/app/build.gradle
+    // 1. android/app/build.gradle
     const buildGradlePath = path.join(app.sourcePath, 'android', 'app', 'build.gradle');
     if (fs.existsSync(buildGradlePath)) {
       let content = fs.readFileSync(buildGradlePath, 'utf8');
       const vcMatch = content.match(/versionCode\s+(\d+)/);
       if (vcMatch) {
         oldVersionCode = parseInt(vcMatch[1], 10);
-        newVersionCode = oldVersionCode + 1;
-        content = content.replace(/versionCode\s+\d+/, `versionCode ${newVersionCode}`);
+        if (!nameOnly) {
+          newVersionCode = oldVersionCode + 1;
+          content = content.replace(/versionCode\s+\d+/, `versionCode ${newVersionCode}`);
+        } else {
+          newVersionCode = oldVersionCode;
+        }
       }
-      const vnMatch = content.match(/versionName\s+["'](\d+\.\d+\.)(\d+)["']/);
+      const vnMatch = content.match(/versionName\s+["']([^"']+)["']/);
       if (vnMatch) {
-        oldVersionName = `${vnMatch[1]}${vnMatch[2]}`;
-        const patch = parseInt(vnMatch[2], 10) + 1;
-        newVersionName = `${vnMatch[1]}${patch}`;
-        content = content.replace(/versionName\s+["']\d+\.\d+\.\d+["']/, `versionName "${newVersionName}"`);
+        oldVersionName = vnMatch[1];
+        newVersionName = bumpVersionName(oldVersionName);
+        content = content.replace(
+          /versionName\s+["'][^"']+["']/,
+          `versionName "${newVersionName}"`
+        );
       }
       fs.writeFileSync(buildGradlePath, content, 'utf8');
       modifiedFiles.push('android/app/build.gradle');
     }
 
-    // 2. Check app.json (Expo / RN config)
+    // 1b. android/app/build.gradle.kts
+    const buildGradleKtsPath = path.join(app.sourcePath, 'android', 'app', 'build.gradle.kts');
+    if (fs.existsSync(buildGradleKtsPath)) {
+      let content = fs.readFileSync(buildGradleKtsPath, 'utf8');
+      const vcMatch = content.match(/versionCode\s*=\s*(\d+)/);
+      if (vcMatch) {
+        oldVersionCode = oldVersionCode ?? parseInt(vcMatch[1], 10);
+        if (!nameOnly) {
+          newVersionCode = (oldVersionCode ?? parseInt(vcMatch[1], 10)) + 1;
+          content = content.replace(/versionCode\s*=\s*\d+/, `versionCode = ${newVersionCode}`);
+        } else {
+          newVersionCode = oldVersionCode ?? parseInt(vcMatch[1], 10);
+        }
+      }
+      const vnMatch = content.match(/versionName\s*=\s*["']([^"']+)["']/);
+      if (vnMatch) {
+        oldVersionName = oldVersionName || vnMatch[1];
+        newVersionName = newVersionName || bumpVersionName(vnMatch[1]);
+        content = content.replace(
+          /versionName\s*=\s*["'][^"']+["']/,
+          `versionName = "${newVersionName}"`
+        );
+      }
+      fs.writeFileSync(buildGradleKtsPath, content, 'utf8');
+      modifiedFiles.push('android/app/build.gradle.kts');
+    }
+
+    // 2. app.json (Expo / RN config)
     const appJsonPath = path.join(app.sourcePath, 'app.json');
     if (fs.existsSync(appJsonPath)) {
       try {
         const appJson = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'));
         const expoOrRoot = appJson.expo || appJson;
         if (expoOrRoot.version) {
-          const parts = expoOrRoot.version.split('.');
-          if (parts.length === 3) {
-            oldVersionName = oldVersionName || expoOrRoot.version;
-            parts[2] = (parseInt(parts[2], 10) + 1).toString();
-            newVersionName = parts.join('.');
-            expoOrRoot.version = newVersionName;
-          }
+          oldVersionName = oldVersionName || expoOrRoot.version;
+          newVersionName = newVersionName || bumpVersionName(expoOrRoot.version);
+          expoOrRoot.version = newVersionName;
         }
         if (expoOrRoot.android) {
-          oldVersionCode = oldVersionCode || expoOrRoot.android.versionCode || 100;
-          newVersionCode = oldVersionCode + 1;
-          expoOrRoot.android.versionCode = newVersionCode;
+          oldVersionCode = oldVersionCode ?? expoOrRoot.android.versionCode ?? null;
+          if (!nameOnly && expoOrRoot.android.versionCode != null) {
+            newVersionCode = (expoOrRoot.android.versionCode || 1) + 1;
+            expoOrRoot.android.versionCode = newVersionCode;
+          } else if (nameOnly) {
+            newVersionCode = expoOrRoot.android.versionCode ?? oldVersionCode;
+          }
         }
         fs.writeFileSync(appJsonPath, JSON.stringify(appJson, null, 2), 'utf8');
         modifiedFiles.push('app.json');
@@ -151,17 +195,34 @@ export const incrementAppVersion = async (app) => {
       }
     }
 
-    if (newVersionCode || modifiedFiles.length > 0) {
-      console.log(`[Build Engine] ✔ Incremented version for ${app.name}: v${oldVersionName || '1.0.0'} (${oldVersionCode || 'auto'}) ➡️ v${newVersionName || '1.0.1'} (${newVersionCode || 'auto+1'}) across ${modifiedFiles.join(', ')}`);
-      fs.writeFileSync(stagedPath, JSON.stringify({ versionName: newVersionName || '1.0.1', versionCode: newVersionCode || 105, updatedAt: new Date().toISOString() }, null, 2), 'utf8');
+    if (newVersionName || (!nameOnly && newVersionCode) || modifiedFiles.length > 0) {
+      console.log(
+        `[Build Engine] ✔ Version bump for ${app.name}: v${oldVersionName || '?'} → v${newVersionName || oldVersionName || '?'} · versionCode ${nameOnly ? 'unchanged' : `${oldVersionCode} → ${newVersionCode}`} (${modifiedFiles.join(', ')})`
+      );
+      fs.writeFileSync(
+        stagedPath,
+        JSON.stringify(
+          {
+            versionName: newVersionName || oldVersionName || '1.0.0',
+            versionCode: nameOnly ? oldVersionCode : newVersionCode,
+            nameOnly: Boolean(nameOnly),
+            updatedAt: new Date().toISOString(),
+          },
+          null,
+          2
+        ),
+        'utf8'
+      );
       return {
         success: true,
         oldVersionCode,
-        newVersionCode,
+        newVersionCode: nameOnly ? oldVersionCode : newVersionCode,
         oldVersionName: oldVersionName || '1.0.0',
-        newVersionName: newVersionName || '1.0.1',
+        newVersionName: newVersionName || oldVersionName || '1.0.0',
         modifiedFiles,
-        summary: `✔ Auto-bumped to v${newVersionName || '1.0.1'} (versionCode: ${newVersionCode || 'incremented'}) in ${modifiedFiles.join(' & ')}`
+        summary: nameOnly
+          ? `✔ versionName bumped ${oldVersionName} → ${newVersionName} (versionCode ${oldVersionCode} unchanged) in ${modifiedFiles.join(' & ')}`
+          : `✔ Auto-bumped to v${newVersionName || '1.0.1'} (versionCode: ${newVersionCode || 'incremented'}) in ${modifiedFiles.join(' & ')}`,
       };
     }
   } catch (err) {

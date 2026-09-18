@@ -82,6 +82,10 @@ async function commitEdit(publisher, packageName, editId) {
   }
 }
 
+export async function commitEditSafe(publisher, packageName, editId) {
+  return commitEdit(publisher, packageName, editId);
+}
+
 // Live API Store Mutation: Sync AI generated listings directly to Google Play Console
 export async function syncStoreListingsViaAPI(packageName, appId) {
   const publisher = getPublisher();

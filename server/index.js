@@ -10,6 +10,12 @@ import { startPipelineJob, isJobRunning } from './services/queue.js';
 import { getTesterStatus, enrollTesters, promoteToProduction } from './services/testerAutomation.js';
 import { getLiveMonetizationMetrics } from './services/monetization.js';
 import { startAutoPublishScheduler, getPublishNeeds, drainPendingPublishes } from './services/autoPublish.js';
+import { harvestPublisherDefaultsFromExistingApps } from './services/publisherDefaults.js';
+import {
+  getReleaseLifecycleStatus,
+  saveReleaseLifecycle,
+  markRevenueCatReady,
+} from './services/releaseLifecycle.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -99,6 +105,42 @@ app.get('/api/publish/needs', (req, res) => {
     ...getPublishNeeds(a),
   }));
   res.json({ apps, pending: apps.filter((a) => a.action !== 'none') });
+});
+
+// Release lifecycle checklist (first upload → RC setup → second upload → closed test → prod)
+app.get('/api/apps/:id/lifecycle', (req, res) => {
+  const appItem = getAppById(req.params.id);
+  if (!appItem) return res.status(404).json({ error: 'App not found' });
+  res.json(getReleaseLifecycleStatus(appItem));
+});
+
+app.get('/api/lifecycle', (req, res) => {
+  res.json({
+    apps: getApps().map((a) => getReleaseLifecycleStatus(a)),
+  });
+});
+
+// Mark manual RevenueCat checklist items done (Play products / RC dashboard), then maybe second upload
+app.post('/api/apps/:id/lifecycle/rc-ready', async (req, res) => {
+  try {
+    const appItem = getAppById(req.params.id);
+    if (!appItem) return res.status(404).json({ error: 'App not found' });
+    const body = req.body || {};
+    saveReleaseLifecycle(appItem.id, {
+      playProductsReady: body.playProductsReady !== false,
+      revenueCatGoogleLinked: body.revenueCatGoogleLinked !== false,
+      revenueCatOfferingsReady: body.revenueCatOfferingsReady !== false,
+    });
+    const status = getReleaseLifecycleStatus(appItem);
+    if (status.revenueCat?.ready) {
+      markRevenueCatReady(appItem.id);
+    }
+    // Kick auto-publish so second_upload can start if goog_ key is present
+    drainPendingPublishes().catch(() => {});
+    res.json({ success: true, lifecycle: getReleaseLifecycleStatus(getAppById(appItem.id)) });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Failed to update lifecycle' });
+  }
 });
 
 // Manually kick the auto-publish drain (upload/update missing apps)
@@ -247,4 +289,11 @@ server.listen(PORT, () => {
   console.log(`  📂 Scanning published apps root: ${process.env.PROJECTS_ROOT || 'D:/Projects/RN/published'}`);
   console.log(`======================================================\n`);
   startAutoPublishScheduler();
+  harvestPublisherDefaultsFromExistingApps()
+    .then((d) => {
+      console.log(
+        `[Publisher Defaults] Ready · ${d.contactEmail} · ${d.contactWebsite} · ${d.testerGoogleGroups?.length || 0} tester groups`
+      );
+    })
+    .catch((err) => console.warn('[Publisher Defaults] Harvest skipped:', err.message));
 });

@@ -60,12 +60,7 @@ export const getTesterStatus = (appId) => {
     aiTriageSummary: statusState === 'COMPLETED'
       ? '✔ 14-Day closed testing period successfully finished. All policy compliance and retention thresholds met. Promoted to Production.'
       : '🤖 Gemini AI Live Triage: Tester retention sits at 100% (12/12 required testers active daily). Zero critical crash loops or blocking ANRs detected across Android 13-15 devices.',
-    testerPoolEmails: savedStatus.testerPoolEmails || [
-      'qa-android-team@playtest-community.org',
-      'device-labs@mobile-qa-hub.com',
-      'closed-beta-testers-apac@google-groups.com',
-      'alpha-testers-emea@google-groups.com'
-    ]
+    testerPoolEmails: savedStatus.testerPoolEmails || getDefaultTesterGroups()
   };
 };
 
@@ -84,11 +79,7 @@ export const enrollTesters = async (appId, testerEmails = [], customDay = null) 
     enrolledTesters: Math.max(12, testerEmails.length || 12),
     crashFreeRate: '99.9%',
     anrRate: '0.04%',
-    testerPoolEmails: testerEmails.length ? testerEmails : [
-      'qa-android-team@playtest-community.org',
-      'closed-beta-testers-apac@google-groups.com',
-      'alpha-testers-emea@google-groups.com'
-    ]
+    testerPoolEmails: testerEmails.length ? testerEmails : getDefaultTesterGroups()
   };
 
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
@@ -100,6 +91,48 @@ export const enrollTesters = async (appId, testerEmails = [], customDay = null) 
   broadcast({ type: 'APP_UPDATE', app: getAppById(appId) });
   return updatedStatus;
 };
+
+/** Seed closed-test Google Groups on first upload without flipping app status. */
+export const seedTesterGroupsForFirstUpload = async (appId, googleGroups = []) => {
+  const app = getAppById(appId);
+  if (!app) throw new Error('App not found');
+
+  const groups = googleGroups.length ? googleGroups : getDefaultTesterGroups();
+  const filePath = path.join(getTestingDir(app.id), 'status.json');
+  let existing = {};
+  if (fs.existsSync(filePath)) {
+    try {
+      existing = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    } catch {}
+  }
+
+  const data = {
+    ...existing,
+    startedAt: existing.startedAt || new Date().toISOString(),
+    statusState: existing.statusState || 'IN_PROGRESS',
+    enrolledTesters: Math.max(existing.enrolledTesters || 0, 12),
+    testerPoolEmails: groups,
+    seededFromPublisherDefaults: true,
+    seededAt: new Date().toISOString(),
+  };
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+  return getTesterStatus(app.id);
+};
+
+function getDefaultTesterGroups() {
+  try {
+    const defaultsPath = path.resolve(process.cwd(), 'data', 'credentials', 'publisher-defaults.json');
+    if (fs.existsSync(defaultsPath)) {
+      const d = JSON.parse(fs.readFileSync(defaultsPath, 'utf8'));
+      if (Array.isArray(d.testerGoogleGroups) && d.testerGoogleGroups.length) {
+        return d.testerGoogleGroups;
+      }
+    }
+  } catch {}
+  return [
+    // Populated dynamically via harvest into publisher-defaults.json
+  ];
+}
 
 export const promoteToProduction = async (appId) => {
   const app = getAppById(appId);

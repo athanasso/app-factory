@@ -48,7 +48,7 @@ export const createPipelineTemplate = () => [
     steps: [
       { id: 'generate_code', name: 'Generate App Code', subtitle: 'React Native / Android codebase', status: StepStatus.PENDING, progress: 0 },
       { id: 'firebase_setup', name: 'Firebase Setup', subtitle: 'Analytics · Crashlytics · Cloud Messaging', status: StepStatus.PENDING, progress: 0 },
-      { id: 'admob_integration', name: 'AdMob Integration', subtitle: 'Banner · Interstitial · Rewarded', status: StepStatus.PENDING, progress: 0 },
+      { id: 'admob_integration', name: 'AdMob & RevenueCat', subtitle: 'Wire production AdMob + RC IDs when used', status: StepStatus.PENDING, progress: 0 },
       { id: 'localization', name: 'Localization Top-Up', subtitle: '49 locales · auto-translated', status: StepStatus.PENDING, progress: 0 },
     ],
   },
@@ -518,6 +518,8 @@ let db = {
     autoTranslateLocales: 49,
     autoSubmitInReview: false,
     telemetryPollingMinutes: 30
+    // contactEmail / contactWebsite / testerGoogleGroups are harvested into
+    // data/credentials/publisher-defaults.json from existing Play apps
   }
 };
 
@@ -626,10 +628,56 @@ export const addApp = (appData) => {
   return newApp;
 };
 
-export const getSettings = () => db.settings;
+export const getSettings = () => {
+  const settings = { ...(db.settings || {}) };
+  // Overlay dynamically harvested publisher defaults when settings fields are empty
+  try {
+    const defaultsPath = path.resolve(process.cwd(), 'data', 'credentials', 'publisher-defaults.json');
+    if (fs.existsSync(defaultsPath)) {
+      const d = JSON.parse(fs.readFileSync(defaultsPath, 'utf8'));
+      if (!settings.contactEmail && d.contactEmail) settings.contactEmail = d.contactEmail;
+      if (!settings.contactWebsite && d.contactWebsite) settings.contactWebsite = d.contactWebsite;
+      if (!settings.privacyPolicyUrl && d.privacyPolicyUrl) settings.privacyPolicyUrl = d.privacyPolicyUrl;
+      if (
+        !settings.testerGoogleGroups &&
+        Array.isArray(d.testerGoogleGroups) &&
+        d.testerGoogleGroups.length
+      ) {
+        settings.testerGoogleGroups = d.testerGoogleGroups.join(', ');
+      }
+    }
+  } catch {}
+  return settings;
+};
 
 export const updateSettings = (updates) => {
   db.settings = { ...db.settings, ...updates };
+  // Keep Play overview defaults in sync when settings change
+  try {
+    const defaultsPath = path.resolve(process.cwd(), 'data', 'credentials', 'publisher-defaults.json');
+    let defaults = {};
+    if (fs.existsSync(defaultsPath)) {
+      defaults = JSON.parse(fs.readFileSync(defaultsPath, 'utf8'));
+    }
+    const next = { ...defaults };
+    if (updates.contactEmail) next.contactEmail = updates.contactEmail;
+    if (updates.contactWebsite) next.contactWebsite = updates.contactWebsite;
+    if (updates.privacyPolicyUrl) next.privacyPolicyUrl = updates.privacyPolicyUrl;
+    if (typeof updates.testerGoogleGroups === 'string') {
+      next.testerGoogleGroups = updates.testerGoogleGroups
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    } else if (Array.isArray(updates.testerGoogleGroups)) {
+      next.testerGoogleGroups = updates.testerGoogleGroups;
+    }
+    if (!fs.existsSync(path.dirname(defaultsPath))) {
+      fs.mkdirSync(path.dirname(defaultsPath), { recursive: true });
+    }
+    fs.writeFileSync(defaultsPath, JSON.stringify(next, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('[Settings] Could not sync publisher-defaults.json:', err.message);
+  }
   saveDb();
   return db.settings;
 };

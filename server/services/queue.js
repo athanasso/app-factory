@@ -6,6 +6,9 @@ import { verifyCodebase, inspectKeystores, buildOrVerifyAAB, incrementAppVersion
 import { extractAppIcon, generateScreenshots, generatePromoMedia } from './media.js';
 import { preparePlayConsoleUpload, submitForReview } from './submission.js';
 import { monitorReviews, analyzeCrashMetrics, trackRevenueAndMetrics, generateUpdateSuggestions } from './monitoring.js';
+import { integrateMonetizationIds } from './monetizationIntegration.js';
+import { advanceLifecycleAfterUpload } from './releaseLifecycle.js';
+import { generatePrivacyPolicy } from './privacyPolicy.js';
 
 // In-memory task queue
 const activeJobs = new Map();
@@ -34,16 +37,29 @@ const UPDATE_STEP_IDS = new Set([
   'update_suggestions',
 ]);
 
-function applyUpdatePipelineMask(pipeline) {
+const SECOND_UPLOAD_STEP_IDS = new Set([
+  'admob_integration', // re-verify RC goog_ key is wired into .env
+  'whats_new',
+  'create_version',
+  'build_aab',
+  'upload_console',
+  'submit_review',
+]);
+
+function applyStepMask(pipeline, allowedIds) {
   return pipeline.map((section) => ({
     ...section,
     steps: section.steps.map((step) => {
-      if (UPDATE_STEP_IDS.has(step.id)) {
+      if (allowedIds.has(step.id)) {
         return { ...step, status: StepStatus.PENDING, progress: 0 };
       }
       return { ...step, status: StepStatus.COMPLETED, progress: 100 };
     }),
   }));
+}
+
+function applyUpdatePipelineMask(pipeline) {
+  return applyStepMask(pipeline, UPDATE_STEP_IDS);
 }
 
 export const startPipelineJob = async (
@@ -60,7 +76,10 @@ export const startPipelineJob = async (
   }
 
   const resolvedMode =
-    mode === 'first_upload' || mode === 'update' || mode === 'full'
+    mode === 'first_upload' ||
+    mode === 'second_upload' ||
+    mode === 'update' ||
+    mode === 'full'
       ? mode
       : fromScratch
         ? 'full'
@@ -73,6 +92,9 @@ export const startPipelineJob = async (
   let pipeline = JSON.parse(JSON.stringify(app.pipeline || createPipelineTemplate()));
   if (resolvedMode === 'first_upload' || fromScratch || resolvedMode === 'full') {
     pipeline = createPipelineTemplate();
+  } else if (resolvedMode === 'second_upload') {
+    pipeline = applyStepMask(createPipelineTemplate(), SECOND_UPLOAD_STEP_IDS);
+    clearStagedVersion(appId);
   } else if (resolvedMode === 'update' || app.status === AppStatus.PUBLISHED) {
     pipeline = applyUpdatePipelineMask(createPipelineTemplate());
     clearStagedVersion(appId);
@@ -156,6 +178,7 @@ const runPipelineSteps = async (appId, pipeline, { mode = 'full', forceCompile =
 const executeStepHandler = async (appId, sectionId, step, pipeline, { mode, forceCompile } = {}) => {
   const app = getAppById(appId);
   const isFirstUpload = mode === 'first_upload';
+  const isSecondUpload = mode === 'second_upload';
 
   try {
     switch (step.id) {
@@ -184,9 +207,17 @@ const executeStepHandler = async (appId, sectionId, step, pipeline, { mode, forc
       case 'firebase_setup':
         step.subtitle = '✔ Firebase SDK configured: Crashlytics, Analytics & FCM initialized';
         break;
-      case 'admob_integration':
-        step.subtitle = '✔ AdMob Units active: Banner, Interstitial & Rewarded Ads connected';
+      case 'admob_integration': {
+        const monRes = await integrateMonetizationIds(app, {
+          force: isFirstUpload || isSecondUpload,
+        });
+        step.subtitle =
+          monRes.summary ||
+          (monRes.usesAdMob || monRes.usesRevenueCat
+            ? '✔ AdMob / RevenueCat IDs integrated for release build'
+            : '✔ No AdMob / RevenueCat SDKs detected');
         break;
+      }
       case 'localization':
         step.subtitle = '✔ Auto-translated i18n string bundles verified for 49 store locales';
         break;
@@ -216,8 +247,13 @@ const executeStepHandler = async (appId, sectionId, step, pipeline, { mode, forc
         break;
       }
       case 'create_version': {
-        if (mode === 'update') clearStagedVersion(app.id);
-        const verRes = await incrementAppVersion(app);
+        if (mode === 'update' || mode === 'second_upload') clearStagedVersion(app.id);
+        const verRes = await incrementAppVersion(app, {
+          force: mode === 'second_upload' || mode === 'update',
+          // Second RC upload: bump versionName 1.x → 2.0.0 only; leave versionCode alone
+          nameOnly: mode === 'second_upload',
+          majorNameBump: mode === 'second_upload',
+        });
         if (verRes && verRes.newVersionName) {
           updateApp(app.id, { version: verRes.newVersionName });
           app.version = verRes.newVersionName;
@@ -253,9 +289,19 @@ const executeStepHandler = async (appId, sectionId, step, pipeline, { mode, forc
       case 'content_rating':
         step.subtitle = '✔ IARC Questionnaire completed: PEGI 3 / Rated for Everyone';
         break;
-      case 'data_safety':
-        step.subtitle = '✔ Data Safety form verified: Fully compliant with Google Play encryption rules';
+      case 'data_safety': {
+        let privacySummary = '';
+        if (isFirstUpload) {
+          const privacy = await generatePrivacyPolicy(app, { force: false });
+          privacySummary = privacy.summary || privacy.url || '';
+        }
+        const { loadPublisherDefaults } = await import('./publisherDefaults.js');
+        const d = loadPublisherDefaults();
+        step.subtitle = privacySummary
+          ? privacySummary
+          : `✔ Data Safety + contact ${d.contactEmail} · privacy ${d.privacyPolicyUrl || d.contactWebsite}`;
         break;
+      }
       case 'verify_assets':
         step.subtitle = '✔ All store marketing, icons & bundle signatures audited (100/100 passed)';
         break;
@@ -280,11 +326,16 @@ const executeStepHandler = async (appId, sectionId, step, pipeline, { mode, forc
       case 'upload_console': {
         const uploadRes = await preparePlayConsoleUpload(app, {
           isFirstUpload,
+          isSecondUpload,
           uploadImages: isFirstUpload,
+          mode,
         });
         if (uploadRes.bundleApiResult && uploadRes.bundleApiResult.success === false) {
           step.subtitle = uploadRes.summary;
           return { success: false, error: uploadRes.bundleApiResult.error || uploadRes.summary };
+        }
+        if (uploadRes.bundleApiResult?.success) {
+          advanceLifecycleAfterUpload(app, { mode });
         }
         step.subtitle = uploadRes.summary || 'Draft release prepared for Google Play Developer API v3';
         break;

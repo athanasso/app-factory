@@ -6,6 +6,14 @@ import {
   uploadBundleViaAPI,
   uploadListingImagesViaAPI,
 } from './playConsole.js';
+import {
+  harvestPublisherDefaultsFromExistingApps,
+  syncStoreOverviewViaAPI,
+  loadPublisherDefaults,
+  resolvePrivacyPolicyUrl,
+} from './publisherDefaults.js';
+import { seedTesterGroupsForFirstUpload } from './testerAutomation.js';
+import { generatePrivacyPolicy, vercelPrivacySlugForApp } from './privacyPolicy.js';
 
 // Ensure storage path for submission metadata
 export const getSubmissionDir = (appId) => {
@@ -67,9 +75,71 @@ function resolveAabPath(app) {
   };
 }
 
-// 1. Upload AAB (+ first-time listing images) to Play Console via API v3
-export const preparePlayConsoleUpload = async (app, { isFirstUpload = false, uploadImages = false } = {}) => {
+// 1. Upload AAB (+ first-time listing images / store overview) to Play Console via API v3
+export const preparePlayConsoleUpload = async (
+  app,
+  { isFirstUpload = false, isSecondUpload = false, uploadImages = false, mode } = {}
+) => {
   console.log(`[Submission Engine] Connecting to Google Play Developer API v3 for: ${app.name}`);
+
+  // Ensure publisher contact + tester groups match other uploaded apps
+  let overviewApiResult = null;
+  if (isFirstUpload) {
+    await harvestPublisherDefaultsFromExistingApps();
+    overviewApiResult = await syncStoreOverviewViaAPI(app.packageName);
+    const defaults = loadPublisherDefaults();
+    try {
+      await seedTesterGroupsForFirstUpload(app.id, defaults.testerGoogleGroups || []);
+    } catch (err) {
+      console.warn(`[Submission Engine] Tester seed warning: ${err.message}`);
+    }
+
+    let privacyUrl = resolvePrivacyPolicyUrl(vercelPrivacySlugForApp(app), defaults);
+    try {
+      const privacy = await generatePrivacyPolicy(app, { force: false });
+      privacyUrl = privacy.url || privacyUrl;
+    } catch (err) {
+      console.warn(`[Submission Engine] Privacy policy generation warning: ${err.message}`);
+    }
+
+    // Persist privacy policy URL into en-US listing metadata when present
+    try {
+      const listingPath = path.resolve(
+        process.cwd(),
+        'data',
+        'apps_content',
+        app.id,
+        'locales',
+        'en-US',
+        'listing.json'
+      );
+      if (fs.existsSync(listingPath) && privacyUrl) {
+        const listing = JSON.parse(fs.readFileSync(listingPath, 'utf8'));
+        listing.privacyPolicyUrl = privacyUrl.includes('{slug}')
+          ? resolvePrivacyPolicyUrl(vercelPrivacySlugForApp(app), defaults)
+          : privacyUrl;
+        listing.contactEmail = defaults.contactEmail;
+        listing.contactWebsite = defaults.contactWebsite;
+        if (
+          listing.fullDescription &&
+          listing.privacyPolicyUrl &&
+          !listing.privacyPolicyUrl.includes('{slug}') &&
+          !String(listing.fullDescription).includes(listing.privacyPolicyUrl)
+        ) {
+          listing.fullDescription = `${listing.fullDescription.trim()}\n\n🔒 Privacy Policy: ${listing.privacyPolicyUrl}\n📧 Support: ${defaults.contactEmail}`;
+        }
+        fs.writeFileSync(listingPath, JSON.stringify(listing, null, 2), 'utf8');
+      }
+    } catch (err) {
+      console.warn(`[Submission Engine] Listing privacy annotate warning: ${err.message}`);
+    }
+  }
+
+  if (isSecondUpload) {
+    console.log(
+      `[Submission Engine] Second upload for ${app.name} — production RevenueCat key baked into rebuild`
+    );
+  }
 
   const apiMutationRes = await syncStoreListingsViaAPI(app.packageName, app.id);
   const mutationStatus = apiMutationRes.success
@@ -86,8 +156,28 @@ export const preparePlayConsoleUpload = async (app, { isFirstUpload = false, upl
     summary: 'No AAB found — run gradlew bundleRelease first',
   };
 
-  const track = app.isReal && app.status === 'Published' ? 'production' : 'internal';
-  const releaseStatus = app.isReal && app.status === 'Published' ? 'COMPLETED' : 'DRAFT';
+  // First uploads for Personal accounts go to closed alpha (14-day tester policy);
+  // published apps get production updates on later runs.
+  const settingsPath = path.resolve(process.cwd(), 'data', 'apps.json');
+  let accountType = 'Personal';
+  try {
+    if (fs.existsSync(settingsPath)) {
+      const db = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+      accountType = db.settings?.accountType || 'Personal';
+    }
+  } catch {}
+  const track =
+    app.isReal && app.status === 'Published' && !isFirstUpload && !isSecondUpload
+      ? 'production'
+      : isFirstUpload || isSecondUpload
+        ? accountType === 'Personal'
+          ? 'alpha'
+          : 'internal'
+        : 'internal';
+  const releaseStatus =
+    app.isReal && app.status === 'Published' && !isFirstUpload && !isSecondUpload
+      ? 'COMPLETED'
+      : 'DRAFT';
 
   let bundleApiResult = null;
   if (bundleInfo.bundlePath && fs.existsSync(bundleInfo.bundlePath)) {
@@ -105,6 +195,12 @@ export const preparePlayConsoleUpload = async (app, { isFirstUpload = false, upl
     imagesApiResult = await uploadListingImagesViaAPI(app.packageName, app.id, 'en-US');
   }
 
+  const overviewStatus = overviewApiResult?.success
+    ? overviewApiResult.summary
+    : overviewApiResult
+      ? `⚠️ Overview: ${overviewApiResult.error}`
+      : null;
+
   const consoleData = {
     packageName: app.packageName,
     versionCode: bundleApiResult?.versionCode || null,
@@ -114,6 +210,8 @@ export const preparePlayConsoleUpload = async (app, { isFirstUpload = false, upl
     apiServiceAccount: creds.email,
     projectId: creds.projectId,
     apiMutationResult: apiMutationRes,
+    overviewApiResult,
+    uploadPhase: isSecondUpload ? 2 : isFirstUpload ? 1 : mode === 'update' ? 'update' : null,
     bundleApiResult: bundleApiResult || { status: 'STAGED_FOR_UPLOAD', note: 'No live .aab binary on disk to push to API' },
     imagesApiResult,
     isFirstUpload: Boolean(isFirstUpload),
@@ -128,9 +226,14 @@ export const preparePlayConsoleUpload = async (app, { isFirstUpload = false, upl
       },
     ],
     timestamp: new Date().toISOString(),
-    summary: bundleApiResult?.success
-      ? `${bundleApiResult.summary}${imagesApiResult?.success ? ` · ${imagesApiResult.summary}` : ''} · ${mutationStatus}`
-      : `${mutationStatus} · AAB upload: ${bundleApiResult?.error || 'failed'} · Track: ${track.toUpperCase()}`,
+    summary: [
+      bundleApiResult?.success ? bundleApiResult.summary : `AAB upload: ${bundleApiResult?.error || 'failed'}`,
+      imagesApiResult?.success ? imagesApiResult.summary : null,
+      overviewStatus,
+      mutationStatus,
+    ]
+      .filter(Boolean)
+      .join(' · '),
   };
 
   saveSubmissionData(app.id, 'play_console_upload.json', consoleData);
