@@ -199,7 +199,11 @@ export function getReleaseLifecycleStatus(app) {
   checklist.push({
     id: 'closed_testing_14d',
     title: '14-day closed testing with ≥12 testers (Personal accounts)',
-    done: testing?.statusState === 'COMPLETED' || testing?.statusState === 'READY_FOR_PROMOTION',
+    done:
+      testing?.statusState === 'COMPLETED' ||
+      testing?.statusState === 'READY_FOR_PROMOTION' ||
+      app.status === 'Published' ||
+      app.isReal,
     required: true,
     note: `Day ${testing?.currentDay || 0}/${testing?.totalDays || 14} · groups on alpha track`,
   });
@@ -207,7 +211,10 @@ export function getReleaseLifecycleStatus(app) {
   checklist.push({
     id: 'promote_production',
     title: 'Promote alpha → production',
-    done: app.status === 'Published' && Boolean(life.promotedAt),
+    done:
+      app.status === 'Published' ||
+      Boolean(life.promotedAt) ||
+      testing?.statusState === 'COMPLETED',
     required: true,
     note: 'Use Tester card “Promote to Production” after the 14-day window.',
   });

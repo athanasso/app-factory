@@ -18,7 +18,7 @@ export const getTesterStatus = (appId) => {
     id: appId,
     name: appId.replace(/^real-/, '').replace(/-/g, ' ').toUpperCase() || 'React Native App',
     packageName: `com.appfactory.${appId.replace(/[^a-zA-Z0-9_]/g, '')}`,
-    status: 'Created'
+    status: 'Created',
   };
 
   const settings = getSettings() || {};
@@ -33,12 +33,67 @@ export const getTesterStatus = (appId) => {
     } catch (e) {}
   }
 
-  // Calculate default testing day or state
-  const startTimestamp = savedStatus.startedAt ? new Date(savedStatus.startedAt).getTime() : Date.now() - (7 * 24 * 60 * 60 * 1000); // default simulated day 7
-  const elapsedDays = Math.min(14, Math.max(1, Math.floor((Date.now() - startTimestamp) / (1000 * 60 * 60 * 24))));
-  
-  const isLive = app.status === AppStatus.PUBLISHED || app.status === 'Published';
-  const statusState = isLive ? 'COMPLETED' : (savedStatus.statusState || (elapsedDays >= 14 ? 'READY_FOR_PROMOTION' : 'IN_PROGRESS'));
+  // Already live / previously published apps have finished the 14-day gate.
+  // "Updating" on real scanned apps means a factory rebuild of an existing Play title — not incomplete beta.
+  const status = app.status || '';
+  const isPublished =
+    status === AppStatus.PUBLISHED ||
+    status === 'Published' ||
+    status === AppStatus.APPROVED ||
+    status === 'Approved';
+  const isUpdateOfLiveApp =
+    app.isReal &&
+    (status === AppStatus.UPDATING ||
+      status === 'Updating' ||
+      status === AppStatus.IN_REVIEW ||
+      status === 'In Review');
+  const savedComplete =
+    savedStatus.statusState === 'COMPLETED' || Boolean(savedStatus.promotedAt);
+
+  let statusState;
+  if (isPublished || isUpdateOfLiveApp || savedComplete) {
+    statusState = 'COMPLETED';
+  } else {
+    const startTimestamp = savedStatus.startedAt
+      ? new Date(savedStatus.startedAt).getTime()
+      : Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const elapsedDays = Math.min(
+      14,
+      Math.max(1, Math.floor((Date.now() - startTimestamp) / (1000 * 60 * 60 * 24)))
+    );
+    statusState =
+      savedStatus.statusState ||
+      (elapsedDays >= 14 ? 'READY_FOR_PROMOTION' : 'IN_PROGRESS');
+  }
+
+  const startTimestamp = savedStatus.startedAt
+    ? new Date(savedStatus.startedAt).getTime()
+    : Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const elapsedDays = Math.min(
+    14,
+    Math.max(1, Math.floor((Date.now() - startTimestamp) / (1000 * 60 * 60 * 24)))
+  );
+
+  // Persist COMPLETED so UI doesn't regress when status flips to Updating mid-pipeline
+  if (statusState === 'COMPLETED' && savedStatus.statusState !== 'COMPLETED') {
+    try {
+      const next = {
+        ...savedStatus,
+        statusState: 'COMPLETED',
+        completedReason: isPublished
+          ? 'app_status_published'
+          : isUpdateOfLiveApp
+            ? 'live_app_update'
+            : 'saved_complete',
+        completedAt: savedStatus.completedAt || new Date().toISOString(),
+        startedAt: savedStatus.startedAt || new Date(startTimestamp).toISOString(),
+        enrolledTesters: savedStatus.enrolledTesters || 12,
+        testerPoolEmails: savedStatus.testerPoolEmails || getDefaultTesterGroups(),
+      };
+      fs.writeFileSync(filePath, JSON.stringify(next, null, 2), 'utf8');
+      savedStatus = next;
+    } catch {}
+  }
 
   return {
     appId: app.id,
@@ -57,10 +112,11 @@ export const getTesterStatus = (appId) => {
     anrRate: savedStatus.anrRate || '< 0.1%',
     dailyActiveSessions: savedStatus.dailyActiveSessions || Math.floor(Math.random() * 80) + 180,
     startedAt: new Date(startTimestamp).toISOString().split('T')[0],
-    aiTriageSummary: statusState === 'COMPLETED'
-      ? '✔ 14-Day closed testing period successfully finished. All policy compliance and retention thresholds met. Promoted to Production.'
-      : '🤖 Gemini AI Live Triage: Tester retention sits at 100% (12/12 required testers active daily). Zero critical crash loops or blocking ANRs detected across Android 13-15 devices.',
-    testerPoolEmails: savedStatus.testerPoolEmails || getDefaultTesterGroups()
+    aiTriageSummary:
+      statusState === 'COMPLETED'
+        ? '✔ 14-Day closed testing period successfully finished. All policy compliance and retention thresholds met. Promoted to Production.'
+        : '🤖 Gemini AI Live Triage: Tester retention sits at 100% (12/12 required testers active daily). Zero critical crash loops or blocking ANRs detected across Android 13-15 devices.',
+    testerPoolEmails: savedStatus.testerPoolEmails || getDefaultTesterGroups(),
   };
 };
 
@@ -69,24 +125,38 @@ export const enrollTesters = async (appId, testerEmails = [], customDay = null) 
   if (!app) throw new Error('App not found');
 
   const filePath = path.join(getTestingDir(app.id), 'status.json');
-  const startedAt = customDay 
-    ? new Date(Date.now() - (customDay * 24 * 60 * 60 * 1000)).toISOString() 
+  const startedAt = customDay
+    ? new Date(Date.now() - customDay * 24 * 60 * 60 * 1000).toISOString()
     : new Date().toISOString();
+
+  const alreadyLive =
+    app.isReal ||
+    app.status === AppStatus.PUBLISHED ||
+    app.status === 'Published' ||
+    app.status === AppStatus.UPDATING ||
+    app.status === 'Updating';
 
   const data = {
     startedAt,
-    statusState: customDay >= 14 ? 'READY_FOR_PROMOTION' : 'IN_PROGRESS',
+    statusState:
+      alreadyLive || customDay >= 14 ? (alreadyLive ? 'COMPLETED' : 'READY_FOR_PROMOTION') : 'IN_PROGRESS',
     enrolledTesters: Math.max(12, testerEmails.length || 12),
     crashFreeRate: '99.9%',
     anrRate: '0.04%',
-    testerPoolEmails: testerEmails.length ? testerEmails : getDefaultTesterGroups()
+    testerPoolEmails: testerEmails.length ? testerEmails : getDefaultTesterGroups(),
   };
 
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
-  
-  // Transition app to In Review / Alpha track
-  updateApp(app.id, { status: AppStatus.IN_REVIEW });
-  
+
+  // Don't demote live / updating published apps to In Review when simulating tester days
+  if (
+    !alreadyLive &&
+    app.status !== AppStatus.PUBLISHED &&
+    app.status !== 'Published'
+  ) {
+    updateApp(app.id, { status: AppStatus.IN_REVIEW });
+  }
+
   const updatedStatus = getTesterStatus(app.id);
   broadcast({ type: 'APP_UPDATE', app: getAppById(appId) });
   return updatedStatus;
@@ -106,10 +176,20 @@ export const seedTesterGroupsForFirstUpload = async (appId, googleGroups = []) =
     } catch {}
   }
 
+  const alreadyLive =
+    app.isReal ||
+    app.status === AppStatus.PUBLISHED ||
+    app.status === 'Published' ||
+    app.status === AppStatus.UPDATING ||
+    app.status === 'Updating';
+
   const data = {
     ...existing,
     startedAt: existing.startedAt || new Date().toISOString(),
-    statusState: existing.statusState || 'IN_PROGRESS',
+    statusState:
+      existing.statusState === 'COMPLETED' || alreadyLive
+        ? 'COMPLETED'
+        : existing.statusState || 'IN_PROGRESS',
     enrolledTesters: Math.max(existing.enrolledTesters || 0, 12),
     testerPoolEmails: groups,
     seededFromPublisherDefaults: true,

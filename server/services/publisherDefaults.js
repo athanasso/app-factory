@@ -16,8 +16,11 @@ const STRUCTURAL_DEFAULTS = {
   privacyPolicyUrl:
     process.env.PRIVACY_POLICY_URL_TEMPLATE ||
     'https://athanasopoulos.is-a.dev/privacy-policy/{slug}/',
-  privacyPoliciesRoot: process.env.PRIVACY_POLICIES_ROOT || 'D:/Projects/privacy-policies',
   privacyPoliciesPortfolioRoot:
+    process.env.PRIVACY_POLICIES_PORTFOLIO_ROOT ||
+    'D:/Projects/Next js/next-portfolio/public/privacy-policy',
+  // Alias kept for older callers — now points at the portfolio public folder
+  privacyPoliciesRoot:
     process.env.PRIVACY_POLICIES_PORTFOLIO_ROOT ||
     'D:/Projects/Next js/next-portfolio/public/privacy-policy',
   privacyPoliciesBaseUrl: 'https://athanasopoulos.is-a.dev/privacy-policy',

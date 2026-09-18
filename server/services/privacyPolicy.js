@@ -3,8 +3,15 @@ import path from 'path';
 import { getModel, generateContentWithRetry } from './content.js';
 import { detectMonetizationUsage } from './monetizationIntegration.js';
 import { loadPublisherDefaults, savePublisherDefaults, resolvePrivacyPolicyUrl } from './publisherDefaults.js';
+import {
+  buildPrivacyPageShell,
+  escapeHtml,
+  obfuscateEmail,
+} from './privacyPolicyTemplate.js';
 
-const DEFAULT_ROOT = process.env.PRIVACY_POLICIES_ROOT || 'D:/Projects/privacy-policies';
+const DEFAULT_PORTFOLIO_ROOT =
+  process.env.PRIVACY_POLICIES_PORTFOLIO_ROOT ||
+  'D:/Projects/Next js/next-portfolio/public/privacy-policy';
 
 const CONTACT_EMAIL_FALLBACK = null;
 const DEVELOPER_NAME = 'Athanasso';
@@ -12,14 +19,6 @@ const DEVELOPER_NAME = 'Athanasso';
 function resolveContactEmail() {
   const d = loadPublisherDefaults();
   return d.contactEmail || CONTACT_EMAIL_FALLBACK || '';
-}
-
-/** Obfuscate email as HTML entities (matches existing privacy-policy pages) */
-function obfuscateEmail(email) {
-  return String(email)
-    .split('')
-    .map((ch) => `&#${ch.charCodeAt(0)};`)
-    .join('');
 }
 
 const SLUG_ALIASES = {
@@ -190,14 +189,6 @@ function buildFallbackSections(app, usage) {
   };
 }
 
-function escapeHtml(str = '') {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
 async function synthesizeSectionsWithAi(app, usage) {
   try {
     const model = getModel();
@@ -240,189 +231,70 @@ Be accurate, concise, and match a professional privacy-policy tone. Do not inven
   }
 }
 
-function renderHtml({ appName, primaryColor, sections, year, contactEmail }) {
+function renderHtml({ appName, primaryColor, sections, year, contactEmail, slug }) {
   const emailHtml = obfuscateEmail(contactEmail || resolveContactEmail());
   const advertisingBlock = sections.advertising
     ? `
-        <h2>Advertising</h2>
-        ${sections.advertising}
+      <h2>Advertising</h2>
+      ${sections.advertising}
 `
     : '';
 
-  return `<!DOCTYPE html>
-<html lang="en">
+  const bodyHtml = `
+      <p>This Privacy Policy describes the policies and procedures of <strong>${DEVELOPER_NAME}</strong> (referred to as "We",
+          "Us", "Our", or "Developer") regarding the collection, use, and disclosure of Your information when You use
+          the <strong>${escapeHtml(appName)}</strong> mobile application (the "Service", or "App").</p>
+      <p>${escapeHtml(sections.intro)}</p>
 
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Privacy Policy - ${escapeHtml(appName)}</title>
-    <style>
-        /* CSS variables for consistent theming */
-        :root {
-            --primary-color: ${primaryColor};
-            --text-color: #1f2937;
-            --bg-color: #f3f4f6;
-            --container-bg: #ffffff;
-            --secondary-text: #4b5563;
-        }
+      <h2>Interpretation and Definitions</h2>
+      <p>The words of which the initial letter is capitalized have meanings defined under the following conditions.
+          The following definitions shall have the same meaning regardless of whether they appear in singular or in
+          plural.</p>
 
-        body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            line-height: 1.6;
-            margin: 0;
-            padding: 20px;
-        }
-
-        .container {
-            max-width: 800px;
-            margin: 40px auto;
-            background: var(--container-bg);
-            padding: 40px;
-            border-radius: 12px;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-        }
-
-        h1 {
-            color: var(--text-color);
-            font-size: 2.25rem;
-            margin-bottom: 2rem;
-            padding-bottom: 1rem;
-            border-bottom: 2px solid var(--bg-color);
-        }
-
-        h2 {
-            color: var(--primary-color);
-            font-size: 1.5rem;
-            margin-top: 2rem;
-            margin-bottom: 1rem;
-        }
-
-        h3 {
-            color: var(--text-color);
-            font-size: 1.1rem;
-            margin-top: 1.5rem;
-            margin-bottom: 0.75rem;
-        }
-
-        p {
-            margin-bottom: 1rem;
-            color: var(--secondary-text);
-        }
-
-        ul {
-            margin-bottom: 1rem;
-            padding-left: 1.5rem;
-            color: var(--secondary-text);
-        }
-
-        li {
-            margin-bottom: 0.5rem;
-        }
-
-        .footer {
-            margin-top: 3rem;
-            padding-top: 2rem;
-            border-bottom: 1px solid var(--bg-color);
-            font-size: 0.875rem;
-            color: #9ca3af;
-            text-align: center;
-        }
-
-        a {
-            color: var(--primary-color);
-            text-decoration: none;
-        }
-
-        a:hover {
-            text-decoration: underline;
-        }
-
-        @media (max-width: 600px) {
-            .container {
-                padding: 20px;
-                margin: 20px auto;
-            }
-
-            h1 {
-                font-size: 1.75rem;
-            }
-        }
-    </style>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-</head>
-
-<body>
-    <div class="container">
-        <h1>Privacy Policy for ${escapeHtml(appName)}</h1>
-        <p><strong>Last updated:</strong> ${new Date().toLocaleDateString('en-US', {
-          month: 'long',
-          day: 'numeric',
-          year: 'numeric',
-        })}</p>
-
-        <p>This Privacy Policy describes the policies and procedures of <strong>${DEVELOPER_NAME}</strong> (referred to as "We",
-            "Us", "Our", or "Developer") regarding the collection, use, and disclosure of Your information when You use
-            the <strong>${escapeHtml(appName)}</strong> mobile application (the "Service", or "App").</p>
-
-        <p>${escapeHtml(sections.intro)}</p>
-
-        <h2>Interpretation and Definitions</h2>
-        <p>The words of which the initial letter is capitalized have meanings defined under the following conditions.
-            The following definitions shall have the same meaning regardless of whether they appear in singular or in
-            plural.</p>
-
-        <h2>Collecting and Using Your Personal Data</h2>
-
-        <h3>Types of Data Collected</h3>
-        ${sections.dataCollected}
-
-        <h3>Permissions Required by the App</h3>
-        ${sections.permissions}
+      <h2>Collecting and Using Your Personal Data</h2>
+      <h3>Types of Data Collected</h3>
+      ${sections.dataCollected}
+      <h3>Permissions Required by the App</h3>
+      ${sections.permissions}
 ${advertisingBlock}
-        <h2>Retention of Your Data</h2>
-        ${sections.retention}
+      <h2>Retention of Your Data</h2>
+      ${sections.retention}
 
-        <h2>Links to Other Websites and Third-Party Policies</h2>
-        <p>Our Service may contain links to other websites that are not operated by Us. We strongly advise You to review
-            the Privacy Policy of every site you visit. Our third-party providers include:</p>
-        ${sections.thirdPartyLinks}
+      <h2>Links to Other Websites and Third-Party Policies</h2>
+      <p>Our Service may contain links to other websites that are not operated by Us. We strongly advise You to review
+          the Privacy Policy of every site you visit. Our third-party providers include:</p>
+      ${sections.thirdPartyLinks}
 
-        <h2>Changes to this Privacy Policy</h2>
-        <p>We may update Our Privacy Policy from time to time. We will notify You of any changes by posting the new
-            Privacy Policy on this page.</p>
-
-        <h2>Contact Us</h2>
-        <p>If you have any questions about this Privacy Policy, the ${escapeHtml(appName)} application, or ${DEVELOPER_NAME}'s
-            practices, please contact us:</p>
-        <ul>
-            <li>By email:
-                <strong>${emailHtml}</strong>
-            </li>
-        </ul>
-
-        <div class="footer">
-            &copy; ${year} ${DEVELOPER_NAME} (${escapeHtml(appName)}). All rights reserved.
-        </div>
-    </div>
-</body>
-
-</html>
+      <h2>Changes to this Privacy Policy</h2>
+      <p>We may update Our Privacy Policy from time to time. We will notify You of any changes by posting the new
+          Privacy Policy on this page.</p>
 `;
+
+  return buildPrivacyPageShell({
+    appName,
+    primaryColor,
+    bodyHtml,
+    contactEmailHtml: emailHtml,
+    year,
+    slug,
+  });
 }
 
 function privacyUrlForSlug(slug) {
   return resolvePrivacyPolicyUrl(slug);
 }
 
-function portfolioPrivacyDir(slug) {
+function portfolioPrivacyRoot() {
   const defaults = loadPublisherDefaults();
-  const root =
+  return (
     defaults.privacyPoliciesPortfolioRoot ||
     process.env.PRIVACY_POLICIES_PORTFOLIO_ROOT ||
-    'D:/Projects/Next js/next-portfolio/public/privacy-policy';
-  return path.join(root, slug);
+    DEFAULT_PORTFOLIO_ROOT
+  );
+}
+
+function portfolioPrivacyDir(slug) {
+  return path.join(portfolioPrivacyRoot(), slug);
 }
 
 function writePrivacyHtml(filePath, html) {
@@ -432,39 +304,26 @@ function writePrivacyHtml(filePath, html) {
 }
 
 /**
- * Generate (or refresh) a privacy policy HTML page under privacy-policies/{slug}
- * and mirror it into next-portfolio/public/privacy-policy/{slug} for deploy.
+ * Generate (or refresh) a privacy policy HTML page under
+ * next-portfolio/public/privacy-policy/{slug}/
  */
 export async function generatePrivacyPolicy(app, { force = false } = {}) {
-  const root = process.env.PRIVACY_POLICIES_ROOT || DEFAULT_ROOT;
   const slug = privacySlugForApp(app);
-  const dir = path.join(root, slug);
-  const filePath = path.join(dir, 'index.html');
   const portfolioPath = path.join(portfolioPrivacyDir(slug), 'index.html');
   const url = privacyUrlForSlug(slug);
 
-  if (!force && fs.existsSync(filePath)) {
-    // Keep portfolio mirror in sync even when source already exists
-    try {
-      const existing = fs.readFileSync(filePath, 'utf8');
-      writePrivacyHtml(portfolioPath, existing);
-    } catch {}
-    console.log(`[Privacy Policy] ✔ Existing policy for ${app.name} at ${filePath}`);
+  if (!force && fs.existsSync(portfolioPath)) {
+    console.log(`[Privacy Policy] ✔ Existing policy for ${app.name} at ${portfolioPath}`);
     return {
       skipped: false,
       existed: true,
       slug,
-      path: filePath,
+      path: portfolioPath,
       portfolioPath,
       url,
       summary: `✔ Privacy HTML ready · ${url}`,
     };
   }
-
-  if (!fs.existsSync(root)) {
-    fs.mkdirSync(root, { recursive: true });
-  }
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
   const usage = detectMonetizationUsage(app.sourcePath);
   const aiSections = await synthesizeSectionsWithAi(app, usage);
@@ -485,12 +344,11 @@ export async function generatePrivacyPolicy(app, { force = false } = {}) {
     sections,
     year: new Date().getFullYear(),
     contactEmail: defaults.contactEmail,
+    slug,
   });
 
-  writePrivacyHtml(filePath, html);
   writePrivacyHtml(portfolioPath, html);
-  console.log(`[Privacy Policy] ✔ Wrote ${filePath}`);
-  console.log(`[Privacy Policy] ✔ Mirrored ${portfolioPath}`);
+  console.log(`[Privacy Policy] ✔ Wrote ${portfolioPath}`);
 
   // Persist URL onto store listing metadata
   try {
@@ -514,15 +372,13 @@ export async function generatePrivacyPolicy(app, { force = false } = {}) {
     console.warn(`[Privacy Policy] listing annotate warning: ${err.message}`);
   }
 
-  // Keep factory defaults aware of privacy policies root only (URLs stay harvested)
   try {
     savePublisherDefaults({
-      privacyPoliciesRoot: root,
-      privacyPoliciesPortfolioRoot: path.dirname(portfolioPrivacyDir(slug)),
+      privacyPoliciesPortfolioRoot: portfolioPrivacyRoot(),
+      privacyPoliciesRoot: portfolioPrivacyRoot(),
     });
   } catch {}
 
-  // Save generation record
   try {
     const outDir = path.resolve(process.cwd(), 'data', 'apps_content', app.id, 'submission');
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
@@ -531,7 +387,7 @@ export async function generatePrivacyPolicy(app, { force = false } = {}) {
       JSON.stringify(
         {
           slug,
-          path: filePath,
+          path: portfolioPath,
           portfolioPath,
           url,
           generatedAt: new Date().toISOString(),
@@ -547,7 +403,7 @@ export async function generatePrivacyPolicy(app, { force = false } = {}) {
     skipped: false,
     existed: false,
     slug,
-    path: filePath,
+    path: portfolioPath,
     portfolioPath,
     url,
     summary: `✔ Generated privacy HTML · ${url}`,
